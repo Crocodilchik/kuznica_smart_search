@@ -1,0 +1,90 @@
+# Контракт между оркестратором и поисковым модулем v1
+
+## Подключение
+
+В режиме `prod` оркестратор вызывает Python-модуль, указанный в `SMART_SEARCH_BACKEND_MODULE`. Модуль может реэкспортировать функции из отдельных пакетов. Пять функций синхронные, принимают аргументы по позиции и возвращают экземпляры общих Pydantic-моделей. Загрузчик проверяет наличие вызываемых экспортов при подключении. Сигнатуры, типы ответов и сценарии отказа проверяются интеграционными тестами.
+
+Исполняемые определения находятся в [моделях](../../smart_search/contracts.py) и [типе Services](../../smart_search/tools.py). Подключением модуля занимаются [загрузчик prod](../../smart_search/modes/production.py) и [выбор режима](../../smart_search/runtime.py). Для передачи запросов по HTTP применяется [внешний контракт](contract_request_interface.md).
+
+Пример модуля, собирающего реализации команды:
+
+```python
+# team_backend/__init__.py
+from team_backend.catalog import search
+from team_backend.query_understanding import understand
+from team_backend.recommendation import recommend
+from team_backend.sources import research
+from team_backend.validation import validate
+
+__all__ = ["understand", "search", "recommend", "research", "validate"]
+```
+
+```powershell
+$env:SMART_SEARCH_MODE = "prod"
+$env:SMART_SEARCH_BACKEND_MODULE = "team_backend"
+uv run --locked python -m uvicorn smart_search.interfaces.api:app --host 127.0.0.1 --port 8000
+```
+
+`GET /health/ready` проверяет импорт и состав экспортов. Сквозная проверка через `POST /v1/search` дополнительно проверяет выполнение функций и доступность зависимостей.
+
+## Сигнатуры и обязанности
+
+| Экспорт | Вход → выход | Обязательства реализации |
+|---|---|---|
+| `understand` | `(request: SearchRequest) -> QuerySpec` | Сохраняет исходный запрос, нормализует текст, извлекает намерение и условия. Учитывает `previous_context` при его наличии. Когда для безопасного подбора не хватает обязательных сведений, возвращает `clarifying_question`. |
+| `search` | `(params: SearchParams) -> SearchResult` | Возвращает до `top_k` кандидатов в порядке ранжирования. Для `sku` выполняет точное сопоставление. Для `bm25`, `dense` и `hybrid` использует соответствующий канал. Неизвестный или недоступный канал обозначает диагностикой. |
+| `recommend` | `(spec: QuerySpec, anchors: list[Product]) -> RecommendationResult` | Возвращает черновики связей. Для каждого задаёт `anchor_id`, существующий товар, `type` и утверждение `claim`, которое предстоит проверить. |
+| `research` | `(draft: RecommendationDraft) -> EvidenceResult` | Возвращает результат проверки конкретной тройки `anchor_id`, `product_id`, `claim`. Доказательства относятся к фактической редакции, версии и условиям применения. |
+| `validate` | `(spec: QuerySpec, results: SearchResult, recommendations: RecommendationResult, evidence: list[EvidenceResult]) -> ValidationResult` | Возвращает проверенные `products`, `recommendations`, диагностические поля и `needs_retry`. Функция поддерживает вызов с пустыми рекомендациями и доказательствами при первичной проверке. |
+
+## Поля и инварианты
+
+### Запрос и поиск
+
+- `QuerySpec.raw_query` сохраняет текст входа, `normalized_query` содержит формулировку для поиска. `intent` принимает `exact_product`, `product_search`, `alternatives`, `complements` или `solution`. `category` и `sku` могут быть `None`.
+- `hard_filters` содержит требования, например ОС, число устройств, наличие и максимальный бюджет. `preferences` содержит мягкие пожелания. Сопоставление по релевантности не заменяет проверку обязательных условий.
+- `SearchParams` содержит `query_spec`, `mode` и `top_k`. При повторе Supervisor увеличивает лимит с 12 до 30. Для запроса альтернативы или дополнения поиск исходной карточки может получить пустые `hard_filters`. В конечном `validate` всегда передаётся исходный `QuerySpec`.
+- `SearchHit` содержит `product`, позицию `rank` начиная с 1 и необязательную оценку `score`. Результат упорядочен от наиболее релевантного. `product_id` стабилен между проходами. Supervisor объединяет кандидатов по этому ID, сохраняя их первое появление.
+- В `Product` обязательны `product_id`, `title` и `category`. Цена `price_kopecks` выражена целым числом копеек за продаваемую единицу. Неизвестная цена, ёмкость лицензии и наличие представлены `None`. Нулевая цена из выгрузки требует отдельной интерпретации и сама по себе не подтверждает попадание в бюджет.
+
+### Рекомендации и ограничения
+
+- `RecommendationDraft.type` принимает `substitute`, `cross_sell` или `upsell`. Исходный товар обозначается `anchor_id`. Карточка рекомендации должна иметь собственный `product_id` из каталога.
+- `EvidenceResult.status` принимает `confirmed`, `contradicted` или `unknown`. Элемент `Evidence` содержит `source_type`, `excerpt`, `checked_at` и источник. Для документа вендора заполните `source_url`, для факта каталога — `catalog_field`. Подтверждение должно совпасть с ID обоих товаров и утверждением. В финальный ответ передаётся проверенная рекомендация с применимыми доказательствами.
+- Проверяйте жёсткие атрибуты на конкретной продаваемой позиции. Стоимость лицензирования заданного числа устройств рассчитывается по известным правилам покупки. Для `budget_scope=primary` бюджет относится к основной позиции и её заменам. Для `bundle` проверяется стоимость предлагаемого комплекта.
+- Верните уникальные проверенные товары и рекомендации. Используйте `reason_codes` для причин исключения, например `budget_exceeded`, `license_capacity_unknown` или `evidence_unconfirmed`. Для полноценного результата нужны четыре подходящие позиции нужного типа. Один подтверждённый товар достаточен для точного SKU. Для недостаточного результата Supervisor использует `needs_retry` и собственный подсчёт, разрешая один повтор.
+
+## Пустой результат и сбой
+
+| Ситуация | Что возвращает адаптер | Действие оркестратора |
+|---|---|---|
+| Каталог успешно обработал запрос, совпадений нет | `SearchResult(hits=[], available=True)` | Для обычного подбора допускает повтор. После завершения может вернуть `empty`. |
+| Каталог недоступен | `SearchResult(available=False, warnings=["search_unavailable"])` либо `TimeoutError` или `ConnectionError` | Отражает сбой в статусе и предупреждениях. Результаты успешного первого прохода сохраняются при отказе повторного поиска. |
+| Для интерпретации не хватает данных | `QuerySpec` с `clarifying_question` | Возвращает `clarification_needed` до обращения к каталогу. |
+| Сервис понимания недоступен | Безопасный результат правил с предупреждением либо `TimeoutError` или `ConnectionError` | Продолжает с полученной структурой запроса или завершает со статусом `unavailable`. |
+| Совместимость не подтверждена | `EvidenceResult(status="unknown", evidence=[])` либо `status="contradicted"` при явном противоречии | Передаёт результат валидатору. Валидатор исключает неподтверждённое утверждение. |
+| Источник недоступен | `TimeoutError` или `ConnectionError` | Добавляет `research_unavailable`. Проверенные основные товары остаются в ответе. |
+
+Тайм-ауты сетевых клиентов задаются в адаптерах. Вызовы могут повторяться в рамках одной обработки, поэтому адаптеры должны безопасно поддерживать повторное чтение. Оркестратор создаёт событие поиска после сборки ответа. [Контракт публикации](contract_events_interface.md)
+
+## Пример точного поиска
+
+```python
+from smart_search.contracts import Product, SearchHit, SearchParams, SearchResult
+
+
+def search_exact_example(params: SearchParams) -> SearchResult:
+    product = Product(
+        product_id="catalog-42",
+        sku="AL-42",
+        title="Серверная лицензия",
+        category="Системное ПО",
+        price_kopecks=1_500_000,
+        in_stock=True,
+    )
+    if params.query_spec.sku == product.sku:
+        return SearchResult(hits=[SearchHit(product=product, rank=1)])
+    return SearchResult()
+```
+
+Этот фрагмент показывает границу точного поиска. Полный модуль реализует все пять экспортов и поддерживает четыре режима поиска из таблицы. Для самостоятельного прогона используйте [тесты маршрутизации](../../tests/unit/test_supervisor.py), [тесты подключения и HTTP](../../tests/integration/test_request_api.py) и [демонстрационный адаптер](../../smart_search/modes/demo.py).
