@@ -1,0 +1,7 @@
+__pycache__/
+.env
+.venv/
+data/catalog.db
+data/search_index.npz
+data/recommendation_edges.db
+Mindbox.yml.gz.xml
