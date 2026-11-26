@@ -1,0 +1,24 @@
+{
+  "query_spec": {
+    "raw_query": "Нужно ПО для инвентаризации 50 ПК под Windows в наличии до 100 тысяч рублей",
+    "normalized_query": "инвентаризация компьютеров",
+    "intent": "product_search",
+    "sku": null,
+    "category": "23336",
+    "hard_filters": {
+      "os": "Windows",
+      "country": null,
+      "devices": 50,
+      "max_total_price_kopecks": 10000000,
+      "budget_scope": "primary",
+      "in_stock": true
+    },
+    "preferences": {
+      "preferred_brand": null,
+      "target_price_kopecks": null
+    },
+    "clarifying_question": null
+  },
+  "mode": "bm25",
+  "top_k": 10
+}

@@ -1,0 +1,20 @@
+{
+  "raw_query": "AL16-03SWS701-0100",
+  "normalized_query": "AL16-03SWS701-0100",
+  "intent": "exact_product",
+  "sku": "AL16-03SWS701-0100",
+  "category": null,
+  "hard_filters": {
+    "os": null,
+    "country": null,
+    "devices": null,
+    "max_total_price_kopecks": null,
+    "budget_scope": null,
+    "in_stock": null
+  },
+  "preferences": {
+    "preferred_brand": null,
+    "target_price_kopecks": null
+  },
+  "clarifying_question": null
+}

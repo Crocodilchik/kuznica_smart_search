@@ -1,0 +1,299 @@
+{
+  "note": "Functional smoke checks; queries are not relevance labels. First BM25 includes loading.",
+  "cases": [
+    {
+      "case": "exact_sku",
+      "status": "ok",
+      "warnings": [],
+      "diagnostics": {
+        "mode": "sku",
+        "source_date": "2026-11-25 14:12",
+        "backend": "sqlite_exact_sku",
+        "latency_ms": 0.897
+      },
+      "hits": [
+        {
+          "product_id": "324046",
+          "title": "Content AI Lingvo x6 Европейская (домашняя версия 1 Standalone), на 3 года",
+          "price_kopecks": 287500,
+          "in_stock": true,
+          "category": "Словари",
+          "score": 1.0
+        }
+      ]
+    },
+    {
+      "case": "product_name",
+      "status": "ok",
+      "warnings": [],
+      "diagnostics": {
+        "mode": "bm25",
+        "source_date": "2026-11-25 14:12",
+        "backend": "fulltext",
+        "indexed_products": 136040,
+        "dense_model": null,
+        "is_subset": false,
+        "latency_ms": 16340.476
+      },
+      "hits": [
+        {
+          "product_id": "503599",
+          "title": "Kaspersky Endpoint Security для бизнеса Расширенный Плюс продление лицензии для академических учреждений на 2 года по",
+          "price_kopecks": 196830,
+          "in_stock": true,
+          "category": "Антивирусы для организаций",
+          "score": 14.177706718444824
+        },
+        {
+          "product_id": "503591",
+          "title": "Kaspersky Endpoint Security для бизнеса Расширенный Плюс продление лицензии для академических учреждений на 1 год по",
+          "price_kopecks": 123210,
+          "in_stock": true,
+          "category": "Антивирусы для организаций",
+          "score": 14.177706718444824
+        },
+        {
+          "product_id": "503551",
+          "title": "Kaspersky Endpoint Security для бизнеса Расширенный Плюс продление лицензии на 2 года по количеству узлов",
+          "price_kopecks": 591030,
+          "in_stock": true,
+          "category": "Антивирусы для организаций",
+          "score": 14.177706718444824
+        },
+        {
+          "product_id": "503543",
+          "title": "Kaspersky Endpoint Security для бизнеса Расширенный Плюс продление лицензии на 1 год по количеству узлов",
+          "price_kopecks": 344700,
+          "in_stock": true,
+          "category": "Антивирусы для организаций",
+          "score": 14.177706718444824
+        }
+      ]
+    },
+    {
+      "case": "budget_stock",
+      "status": "ok",
+      "warnings": [],
+      "diagnostics": {
+        "mode": "bm25",
+        "source_date": "2026-11-25 14:12",
+        "backend": "fulltext",
+        "indexed_products": 136040,
+        "dense_model": null,
+        "is_subset": false,
+        "latency_ms": 5335.586
+      },
+      "hits": [
+        {
+          "product_id": "533196",
+          "title": "Доктор Веб Антивирус + Центр Управления лицензия на 3 года на 3 года на 4 ПК",
+          "price_kopecks": 5460000,
+          "in_stock": true,
+          "category": "Антивирусы для организаций",
+          "score": 2.2517073154449463
+        },
+        {
+          "product_id": "533195",
+          "title": "Доктор Веб Антивирус + Центр Управления лицензия на 3 года на 3 года на 3 ПК",
+          "price_kopecks": 4095000,
+          "in_stock": true,
+          "category": "Антивирусы для организаций",
+          "score": 2.2517073154449463
+        },
+        {
+          "product_id": "533188",
+          "title": "Доктор Веб Антивирус + Центр Управления лицензия на 3 года на 3 года на 2 ПК",
+          "price_kopecks": 2730000,
+          "in_stock": true,
+          "category": "Антивирусы для организаций",
+          "score": 2.2517073154449463
+        },
+        {
+          "product_id": "533182",
+          "title": "Доктор Веб Антивирус + Центр Управления лицензия на 3 года на 3 года на 1 ПК",
+          "price_kopecks": 1365000,
+          "in_stock": true,
+          "category": "Антивирусы для организаций",
+          "score": 2.2517073154449463
+        }
+      ]
+    },
+    {
+      "case": "server_category",
+      "status": "ok",
+      "warnings": [],
+      "diagnostics": {
+        "mode": "bm25",
+        "source_date": "2026-11-25 14:12",
+        "backend": "fulltext",
+        "indexed_products": 136040,
+        "dense_model": null,
+        "is_subset": false,
+        "latency_ms": 5637.301
+      },
+      "hits": [
+        {
+          "product_id": "542029",
+          "title": "Сервер INFERIT RS108 R1G2D24/1x4216/2x16GB/4x240GB/9361-8i/2x800W",
+          "price_kopecks": 105700700,
+          "in_stock": true,
+          "category": "Rack-серверы",
+          "score": 6.770924091339111
+        },
+        {
+          "product_id": "542027",
+          "title": "Сервер INFERIT RS108 R1G2D24/2x4216/2x16GB/2x240GB/9361-8i/2x800W",
+          "price_kopecks": 110048800,
+          "in_stock": true,
+          "category": "Rack-серверы",
+          "score": 6.770924091339111
+        },
+        {
+          "product_id": "542032",
+          "title": "Сервер INFERIT RS108 R1G3D32/4314/1x16GB/2x1TB/9361-8i/4x1GbE/2x1200W",
+          "price_kopecks": 108800000,
+          "in_stock": true,
+          "category": "Rack-серверы",
+          "score": 6.731861114501953
+        },
+        {
+          "product_id": "542031",
+          "title": "Сервер INFERIT RS108 R1G3D32/2x4314/2x16GB/2x1TB/9361-8i/4x1GbE/2x1200W",
+          "price_kopecks": 140845000,
+          "in_stock": true,
+          "category": "Rack-серверы",
+          "score": 6.731861114501953
+        }
+      ]
+    },
+    {
+      "case": "backup",
+      "status": "ok",
+      "warnings": [],
+      "diagnostics": {
+        "mode": "bm25",
+        "source_date": "2026-11-25 14:12",
+        "backend": "fulltext",
+        "indexed_products": 136040,
+        "dense_model": null,
+        "is_subset": false,
+        "latency_ms": 4703.283
+      },
+      "hits": [
+        {
+          "product_id": "527417",
+          "title": "Softline Резервное копирование на площадке заказчика, Сервис резервного копирования и репликации Корпоративный+",
+          "price_kopecks": 64900,
+          "in_stock": true,
+          "category": "Программное обеспечение для резервного копирования",
+          "score": 13.218622207641602
+        },
+        {
+          "product_id": "527416",
+          "title": "Softline Резервное копирование на площадке заказчика, Сервис резервного копирования и репликации Корпоративный+",
+          "price_kopecks": 178400,
+          "in_stock": true,
+          "category": "Программное обеспечение для резервного копирования",
+          "score": 13.218622207641602
+        },
+        {
+          "product_id": "527420",
+          "title": "Softline Резервное копирование КБО, Кибербэкап облачный Workstation на 1 месяц",
+          "price_kopecks": 25600,
+          "in_stock": true,
+          "category": "Программное обеспечение для резервного копирования",
+          "score": 12.213345527648926
+        },
+        {
+          "product_id": "527419",
+          "title": "Softline Резервное копирование КБО, Кибербэкап облачный Server на 1 месяц",
+          "price_kopecks": 162400,
+          "in_stock": true,
+          "category": "Программное обеспечение для резервного копирования",
+          "score": 12.213345527648926
+        }
+      ]
+    },
+    {
+      "case": "device_budget",
+      "status": "ok",
+      "warnings": [
+        "devices_filter_requires_explicit_device_pack_capacity; no assumed license multiplication"
+      ],
+      "diagnostics": {
+        "mode": "bm25",
+        "source_date": "2026-11-25 14:12",
+        "backend": "fulltext",
+        "indexed_products": 136040,
+        "dense_model": null,
+        "is_subset": false,
+        "latency_ms": 5481.125
+      },
+      "hits": [
+        {
+          "product_id": "140181",
+          "title": "10-Strike Software 10-Страйк: Инвентаризация Компьютеров Pro, Лицензия для учета 50 ПК",
+          "price_kopecks": 2500000,
+          "in_stock": true,
+          "category": "Программное обеспечение для учета компьютеров",
+          "score": 20.9832820892334
+        },
+        {
+          "product_id": "49035",
+          "title": "10-Strike Software 10-Страйк: Инвентаризация Компьютеров Pro, Лицензия для учета 300 ПК",
+          "price_kopecks": 8000000,
+          "in_stock": true,
+          "category": "Программное обеспечение для учета компьютеров",
+          "score": 20.9832820892334
+        },
+        {
+          "product_id": "49034",
+          "title": "10-Strike Software 10-Страйк: Инвентаризация Компьютеров Pro, Лицензия для учета 200 ПК",
+          "price_kopecks": 6000000,
+          "in_stock": true,
+          "category": "Программное обеспечение для учета компьютеров",
+          "score": 20.9832820892334
+        },
+        {
+          "product_id": "49033",
+          "title": "10-Strike Software 10-Страйк: Инвентаризация Компьютеров Pro, Лицензия для учета 100 ПК",
+          "price_kopecks": 4000000,
+          "in_stock": true,
+          "category": "Программное обеспечение для учета компьютеров",
+          "score": 20.9832820892334
+        }
+      ]
+    },
+    {
+      "case": "zero_results",
+      "status": "empty",
+      "warnings": [],
+      "diagnostics": {
+        "mode": "bm25",
+        "source_date": "2026-11-25 14:12",
+        "backend": "fulltext",
+        "indexed_products": 136040,
+        "dense_model": null,
+        "is_subset": false,
+        "latency_ms": 4113.054
+      },
+      "hits": []
+    },
+    {
+      "case": "unknown_country",
+      "status": "empty",
+      "warnings": [
+        "country_unknown_in_catalog"
+      ],
+      "diagnostics": {
+        "mode": "bm25",
+        "source_date": "2026-11-25 14:12",
+        "backend": "catalog_metadata",
+        "latency_ms": 0.005
+      },
+      "hits": []
+    }
+  ],
+  "median_bm25_ms": 5335.586,
+  "elapsed_seconds": 41.984
+}
