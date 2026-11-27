@@ -1,0 +1,49 @@
+x-image: &app-image
+  image: kuznica-smart-search:local
+  build:
+    context: .
+
+services:
+  app:
+    <<: *app-image
+    init: true
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      SMART_SEARCH_MODE: ${SMART_SEARCH_MODE:-test}
+      SMART_SEARCH_BACKEND_MODULE: ${SMART_SEARCH_BACKEND_MODULE:-smart_search.backend}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      SOFTLINE_CATALOG_DIR: /var/lib/smart-search/catalog
+      SOFTLINE_INDEX_DIR: /var/lib/smart-search/qdrant
+      SMART_SEARCH_EVENT_DB: /var/lib/smart-search/events.sqlite3
+    ports:
+      - "127.0.0.1:${SMART_SEARCH_PORT:-8501}:8501"
+    volumes:
+      - search-data:/var/lib/smart-search
+
+  catalog:
+    <<: *app-image
+    profiles: [setup]
+    working_dir: /var/lib/smart-search
+    environment:
+      PYTHONPATH: /app
+    healthcheck:
+      disable: true
+    volumes:
+      - search-data:/var/lib/smart-search
+      - type: bind
+        source: ${SOFTLINE_FEED_PATH:-./data/raw/Mindbox.yml.gz.xml}
+        target: /input/Mindbox.yml.gz.xml
+        read_only: true
+        bind:
+          create_host_path: false
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        python -X utf8 -m softline_search prepare /input/Mindbox.yml.gz.xml --output /var/lib/smart-search/catalog --reports /var/lib/smart-search/catalog-reports
+        python -X utf8 -m softline_search index --catalog /var/lib/smart-search/catalog --output /var/lib/smart-search/qdrant
+
+volumes:
+  search-data:

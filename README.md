@@ -11,7 +11,7 @@
 3. Подготовьте каталог и индекс, если переносите приложение на новую машину. В рабочей директории `kuznica_merge` они уже собраны из выгрузки Softline. В новом клоне укажите фактический путь к XML.
 
    ```powershell
-   uv run --locked python -X utf8 -m softline_search prepare "../Умный поиск на сайте/Mindbox.yml.gz.xml" --output data/catalog --reports .local/catalog-reports
+   uv run --locked python -X utf8 -m softline_search prepare "data/raw/Mindbox.yml.gz.xml" --output data/catalog --reports .local/catalog-reports
    uv run --locked --env-file .env python -X utf8 -m softline_search index --catalog data/catalog --output data/qdrant
    ```
 
@@ -45,6 +45,35 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/v1/search -ContentType
 | [scripts](scripts) | Команды оценки качества. |
 | [tests](tests) | Модульные проверки в `unit/`, интеграционные проверки в `integration/` и данные в `fixtures/`. |
 | [docs/contracts](docs/contracts) | [HTTP-контракт](docs/contracts/contract_request_interface.md), [контракт поискового модуля](docs/contracts/contract_tools_interface.md) и [контракт событий](docs/contracts/contract_events_interface.md). |
+
+## Запуск через Docker
+
+На Windows и macOS нужен Docker Desktop в режиме Linux-контейнеров. На Linux подойдут Docker Engine и Compose 2.24 или новее. Python на компьютере устанавливать отдельно не нужно. [Требование к версии Compose](https://docs.docker.com/reference/compose-file/services/#env_file)
+
+Из корня репозитория запустите демо:
+
+```text
+docker compose up --build -d
+docker compose ps
+```
+
+Откройте [127.0.0.1:8501](http://127.0.0.1:8501). По умолчанию Compose запускает режим `test` без ключа DeepSeek. Если порт занят, задайте `SMART_SEARCH_PORT=8502` в окружении или в локальном `.env` и откройте новый порт.
+
+Для полного каталога положите выданный XML в `data/raw/Mindbox.yml.gz.xml`. Папка [`data/raw/`](data/raw/README.md) входит в репозиторий, а каждый разработчик добавляет туда свою локальную копию выгрузки. Для файла в другом месте укажите `SOFTLINE_FEED_PATH`. Например, в PowerShell для XML в корне проекта:
+
+```powershell
+$env:SOFTLINE_FEED_PATH = './Mindbox.yml.gz.xml'
+docker compose stop app
+docker compose run --rm --build catalog
+if ($LASTEXITCODE -ne 0) { throw 'Не удалось собрать каталог' }
+$env:SMART_SEARCH_MODE = 'prod'
+$env:DEEPSEEK_API_KEY = [Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY', 'User')
+docker compose up -d
+```
+
+На другой машине настройки модели можно задать в локальном `.env` по образцу [`.env.example`](.env.example). Для внешнего брокера или Qdrant указывайте адрес, доступный **из контейнера**. Локальный Qdrant и демо запускаются без этих сервисов. Каталог, индекс и события демо сохраняются в томе `search-data`. Для остановки выполните `docker compose down`.
+
+Если Docker Engine запущен внутри WSL и контейнер останавливается после выхода из сеанса WSL, запускайте `docker compose up --no-build app` без `-d` и оставляйте терминал открытым. Первый запрос к полному локальному каталогу может занять больше времени: Qdrant загружает данные и подготавливает текстовый индекс в памяти.
 
 ## Запуск в режиме test
 
