@@ -10,6 +10,7 @@
    ```powershell
    docker compose up -d --build --wait
    ```
+   Compose поднимет `qdrant`, `redis` (для 24-часовой истории анонимных сессий; папка `data/raw/redis-data/` создастся автоматически), `api` и `frontend`.
 4. Откройте сайт: `http://127.0.0.1:3000` (API Swagger: `http://127.0.0.1:8000/docs`).
 
 ## Если нужно пересобрать базу с нуля из XML
