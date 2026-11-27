@@ -215,7 +215,7 @@ def build_index(
                 client.create_payload_index(
                     collection, name, qm.PayloadSchemaType.KEYWORD, wait=True
                 )
-            for name in ("price_kopecks", "license_units"):
+            for name in ("price_kopecks", "license_units", "product.min_purchase"):
                 client.create_payload_index(
                     collection, name, qm.PayloadSchemaType.INTEGER, wait=True
                 )

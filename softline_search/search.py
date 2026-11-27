@@ -158,6 +158,18 @@ class SearchEngine:
                     )
             else:
                 self.sparse = SparseBM25(self.index_dir / "models", self.index["sparse_avg_len"])
+            if self.url:
+                try:
+                    info = client.get_collection(self.index["collection"])
+                    if "product.min_purchase" not in (info.payload_schema or {}):
+                        client.create_payload_index(
+                            self.index["collection"],
+                            "product.min_purchase",
+                            qm.PayloadSchemaType.INTEGER,
+                            wait=True,
+                        )
+                except (UnexpectedResponse, ResponseHandlingException, OSError):
+                    pass
             self.client = client
         except Exception:
             client.close()
@@ -209,6 +221,8 @@ class SearchEngine:
             if len(points) < batch_size:
                 break
             offset += len(points)
+            if offset >= max(500, top_k * 5):
+                break
         return eligible[:top_k], len(eligible) <= top_k
 
     def search(self, params: SearchParams | dict) -> SearchResult:
