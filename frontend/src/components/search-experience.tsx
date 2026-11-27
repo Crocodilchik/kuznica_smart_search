@@ -269,14 +269,21 @@ function formatStorePrice(price: number): string {
   }).format(price);
 }
 
-function displayValue(value: unknown): string | null {
-  if (value === null || value === undefined || value === "") return null;
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return null;
-  }
+const catalogDetailLabels = ["Срок действия", "Тип лицензии", "Минимальная покупка", "Способ доставки", "Тип поставки"];
+
+function catalogDetail(value: unknown): string {
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .filter((item): item is string | number => typeof item === "string" || typeof item === "number")
+    .map((item) => String(item).trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function findProductImage(sku: Product["sku"]): string | undefined {
+  const normalized = sku?.trim().toUpperCase();
+  if (!normalized) return undefined;
+  return storeProducts.find((product) => product.sku?.toUpperCase() === normalized)?.image;
 }
 
 function StoreIcon({ name }: { name: string }) {
@@ -297,7 +304,7 @@ function SparklesIcon() {
 }
 
 function StockLabel({ inStock }: { inStock: boolean | null | undefined }) {
-  if (inStock === true) return <span className="stock stockAvailable">В наличии по данным каталога</span>;
+  if (inStock === true) return <span className="stock stockAvailable">В наличии</span>;
   if (inStock === false) return <span className="stock stockUnavailable">Нет в наличии</span>;
   return <span className="stock stockUnknown">Наличие неизвестно</span>;
 }
@@ -312,46 +319,47 @@ function ProductCard({
   recommendation?: Recommendation;
 }) {
   const link = safeHttpsUrl(product.url);
-  const attributes = Object.entries(product.attributes ?? {})
-    .map(([label, value]) => [label, displayValue(value)] as const)
-    .filter((entry): entry is readonly [string, string] => Boolean(entry[1]))
-    .slice(0, 8);
+  const image = findProductImage(product.sku);
+  const descriptionFields = product.attributes?.description_fields;
+  const attributes = catalogDetailLabels
+    .map((label) => {
+      const detail = isRecord(descriptionFields) ? descriptionFields[label] : undefined;
+      return [label, catalogDetail(detail) || catalogDetail(product.attributes?.[label])] as const;
+    })
+    .filter(([, value]) => value);
+  const description = attributes.length === 0 ? product.description?.trim() : "";
 
   return (
     <article className="searchProductCard">
-      <div className="productTopline">
-        <span className="categoryPill">
-          {recommendation ? config.relation_labels[recommendation.type] ?? "Связанный товар" : product.category}
-        </span>
+      {image && <img className="searchProductImage" src={image} alt="" loading="lazy" />}
+      <p className="productByline">{product.brand || product.category}</p>
+      <h3>{product.title}</h3>
+      {product.sku && <p className="productMeta">Артикул: {product.sku}</p>}
+      {(attributes.length > 0 || description || product.license_units != null) && (
+        <details className="productDetails">
+          <summary>Подробнее о товаре</summary>
+          {description && <p>{description}</p>}
+          <dl>
+            {attributes.map(([label, value]) => (
+              <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
+            ))}
+            {product.license_units != null && (
+              <div><dt>Единиц лицензии</dt><dd>{product.license_units}</dd></div>
+            )}
+          </dl>
+        </details>
+      )}
+      {recommendation && (
+        <div className="productRecommendation">
+          <strong>{config.relation_labels[recommendation.type] ?? "Связанный товар"}</strong>
+          <RecommendationDetails recommendation={recommendation} />
+        </div>
+      )}
+      <div className="productPurchase">
+        <p className="productPrice">{formatPrice(product.price_kopecks)}</p>
+        {link && <a className="productLink" href={link} target="_blank" rel="noopener noreferrer">Открыть товар</a>}
         <StockLabel inStock={product.in_stock} />
       </div>
-      <h3>{product.title}</h3>
-      {(product.brand || product.sku) && (
-        <p className="productMeta">
-          {product.brand && <span>{product.brand}</span>}
-          {product.brand && product.sku && <span aria-hidden="true"> · </span>}
-          {product.sku && <span>Артикул: {product.sku}</span>}
-        </p>
-      )}
-      <p className="productPrice">{formatPrice(product.price_kopecks)}</p>
-      {product.license_units != null && <p className="productMeta">Единиц лицензии: {product.license_units}</p>}
-      {product.description?.trim() && <p className="productDescription">{product.description}</p>}
-      {attributes.length > 0 && (
-        <dl className="attributesList">
-          {attributes.map(([label, value]) => (
-            <div key={label}>
-              <dt>{label}</dt>
-              <dd>{value}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-      {recommendation && <RecommendationDetails recommendation={recommendation} />}
-      {link && (
-        <a className="productLink" href={link} target="_blank" rel="noopener noreferrer">
-          Открыть карточку <span aria-hidden="true">↗</span>
-        </a>
-      )}
     </article>
   );
 }
@@ -544,13 +552,16 @@ function ChatProducts({ response }: { response: SearchResponse }) {
     <div className="agentProducts">
       {items.map(({ product, note, evidence, key }) => {
         const link = safeHttpsUrl(product.url);
+        const image = findProductImage(product.sku);
         return (
           <article className="agentProduct" key={key}>
-            <div className="agentProductGlyph" aria-hidden="true">S</div>
-            <div>
+            {image && <img src={image} alt="" loading="lazy" />}
+            <div className="agentProductCopy">
+              <p className="productByline">{product.brand || product.category}</p>
               <h4>{product.title}</h4>
-              <p>{formatPrice(product.price_kopecks)}</p>
-              {note && <span>{note}</span>}
+              <p className="productPrice">{formatPrice(product.price_kopecks)}</p>
+              <StockLabel inStock={product.in_stock} />
+              {note && <span className="agentProductNote">{note}</span>}
               {evidence.length > 0 && (
                 <details className="agentEvidence">
                   <summary>Основание рекомендации</summary>
@@ -561,7 +572,7 @@ function ChatProducts({ response }: { response: SearchResponse }) {
                   </ul>
                 </details>
               )}
-              {link && <a href={link} target="_blank" rel="noopener noreferrer">Карточка товара ↗</a>}
+              {link && <a className="productLink" href={link} target="_blank" rel="noopener noreferrer">Открыть товар</a>}
             </div>
           </article>
         );
