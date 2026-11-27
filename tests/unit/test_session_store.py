@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+import pytest
+from fastapi.testclient import TestClient
+
+from smart_search.contracts import Product, SearchResponse
+from smart_search.interfaces import api as api_module
+from smart_search.session_store import RedisSessionStore, SessionTurn, format_context
+
+
+class FakePipeline:
+    def __init__(self, backend: FakeAsyncRedis):
+        self.backend = backend
+        self.ops: list[tuple] = []
+
+    def rpush(self, key: str, value: str):
+        self.ops.append(("rpush", key, value))
+        return self
+
+    def ltrim(self, key: str, start: int, end: int):
+        self.ops.append(("ltrim", key, start, end))
+        return self
+
+    def expire(self, key: str, ttl: int):
+        self.ops.append(("expire", key, ttl))
+        return self
+
+    async def execute(self):
+        for op in self.ops:
+            kind = op[0]
+            if kind == "rpush":
+                self.backend.lists.setdefault(op[1], []).append(op[2])
+            elif kind == "ltrim":
+                items = self.backend.lists.get(op[1], [])
+                self.backend.lists[op[1]] = items[op[2] :]
+            elif kind == "expire":
+                self.backend.ttls[op[1]] = op[2]
+        return [True] * len(self.ops)
+
+
+class FakeAsyncRedis:
+    def __init__(self):
+        self.lists: dict[str, list[str]] = {}
+        self.ttls: dict[str, int] = {}
+
+    def pipeline(self, transaction: bool = True):
+        return FakePipeline(self)
+
+    async def lrange(self, key: str, start: int, end: int):
+        return list(self.lists.get(key, []))
+
+    async def delete(self, key: str):
+        existed = key in self.lists
+        self.lists.pop(key, None)
+        self.ttls.pop(key, None)
+        return 1 if existed else 0
+
+    async def aclose(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_redis_session_store_persists_full_24h_history_and_clears():
+    fake = FakeAsyncRedis()
+    store = RedisSessionStore("redis://fake:6379/0", ttl_seconds=86_400)
+    store._client = fake
+    store._client_url = "redis://fake:6379/0"
+
+    resp1 = SearchResponse(
+        request_id="r1",
+        status="ok",
+        intent="product_search",
+        products=[Product(product_id="p1", title="Мышь игровая RGB", category="Мыши")],
+    )
+    resp2 = SearchResponse(
+        request_id="r2",
+        status="ok",
+        intent="product_search",
+        products=[Product(product_id="p2", title="Мышь беспроводная", category="Мыши")],
+    )
+
+    await store.append_turn("sess-1", "хочу мышку до 10 тыс", resp1)
+    await store.append_turn("sess-1", "а покажи беспроводную", resp2)
+
+    history = await store.get_history("sess-1")
+    assert len(history) == 2
+    assert [t.query for t in history] == ["хочу мышку до 10 тыс", "а покажи беспроводную"]
+    assert fake.ttls["smart_search:session:sess-1"] == 86_400
+
+    ctx = await store.get_context("sess-1")
+    assert ctx is not None and "хочу мышку до 10 тыс" in ctx and "Мышь беспроводная" in ctx
+
+    assert await store.clear("sess-1") is True
+    assert await store.get_history("sess-1") == []
+
+
+@pytest.mark.asyncio
+async def test_session_store_is_noop_without_redis_url(monkeypatch):
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    store = RedisSessionStore()
+    assert await store.get_history("sess-x") == []
+    assert await store.get_context("sess-x") is None
+    assert await store.clear("sess-x") is False
+
+
+def test_format_context_caps_window_for_long_sessions():
+    turns = [
+        SessionTurn(
+            timestamp=datetime.now(UTC),
+            query=f"запрос номер {i}",
+            status="ok",
+            product_count=4,
+            top_titles=[f"Товар {i}"],
+        )
+        for i in range(25)
+    ]
+    ctx = format_context(turns, max_items=8, max_chars=1200)
+    assert ctx is not None
+    assert "запрос номер 24" in ctx
+    assert "запрос номер 0" not in ctx
+    assert len(ctx) <= 1200
+
+
+def test_api_hydrates_previous_context_and_exposes_session_endpoints(prod_backend, monkeypatch):
+    fake = FakeAsyncRedis()
+    store = RedisSessionStore("redis://fake:6379/0", ttl_seconds=86_400)
+    store._client = fake
+    store._client_url = "redis://fake:6379/0"
+    monkeypatch.setattr(api_module, "session_store", store)
+
+    seen_contexts: list[str | None] = []
+    original_understand = prod_backend.understand
+
+    def spy_understand(req):
+        seen_contexts.append(req.previous_context)
+        return original_understand(req)
+
+    monkeypatch.setattr(prod_backend, "understand", spy_understand)
+
+    with TestClient(api_module.app) as client:
+        r1 = client.post(
+            "/v1/search",
+            json={"query": "Монитор 27 дюймов", "session_id": "anon-42"},
+        )
+        assert r1.status_code == 200
+        assert seen_contexts[-1] is None
+
+        r2 = client.post(
+            "/v1/search",
+            json={"query": "А теперь дешевле", "session_id": "anon-42"},
+        )
+        assert r2.status_code == 200
+        assert seen_contexts[-1] is not None and "Монитор 27 дюймов" in seen_contexts[-1]
+
+        hist = client.get("/v1/sessions/anon-42")
+        assert hist.status_code == 200
+        body = hist.json()
+        assert body["ttl_seconds"] == 86_400
+        assert len(body["turns"]) == 2
+
+        cleared = client.delete("/v1/sessions/anon-42")
+        assert cleared.status_code == 200 and cleared.json()["cleared"] is True
+        assert client.get("/v1/sessions/anon-42").json()["turns"] == []
