@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "softline-catalog-search"
+version = "0.1.0"
+description = "Developer 3: streaming YML catalog and Qdrant BM25 search"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.10,<3", "qdrant-client[fastembed]>=1.20,<2", "defusedxml>=0.7,<1", "py-rust-stemmers>=0.1.8,<0.2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+
+[project.scripts]
+softline-search = "softline_search.cli:main"
+
+[tool.setuptools]
+packages = ["softline_search"]
+py-modules = ["contracts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"

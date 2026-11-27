@@ -47,3 +47,16 @@ id_dsa
 *.sqlite3-shm
 /kuznica_smart_search.zip
 module2/lit/Mindbox.yml.gz.xml
+*.egg-info/
+/data/raw/
+/data/catalog/
+/data/qdrant/
+/data/models/
+/data/*.tmp
+/reports/raw_profile.json
+/data/qdrant-*/
+Mindbox.yml.gz.xml
+/data/catalog.db
+/data/search_index.npz
+/data/recommendation_edges.db
+!/.env.example

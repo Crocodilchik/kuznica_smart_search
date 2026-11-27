@@ -1,0 +1,10 @@
+{
+  "query_spec": {
+    "raw_query": "AL16-03SWS701-0100",
+    "normalized_query": "AL16-03SWS701-0100",
+    "intent": "exact_product",
+    "sku": "AL16-03SWS701-0100"
+  },
+  "mode": "sku",
+  "top_k": 4
+}

@@ -1,0 +1,43 @@
+{
+  "product_id": "542029",
+  "sku": "IFS 00912",
+  "title": "Сервер INFERIT RS108 R1G2D24/1x4216/2x16GB/4x240GB/9361-8i/2x800W",
+  "category": "Rack-серверы",
+  "brand": "Инферит",
+  "price_kopecks": 105700700,
+  "license_units": null,
+  "in_stock": true,
+  "url": "https://store.softline.ru/inferit/ifs-00912-542029/",
+  "attributes": {
+    "Тип продукта": [
+      "электроника"
+    ],
+    "Тип поставки": [
+      "физическая"
+    ],
+    "price_status": "known",
+    "price_source": "offer.price"
+  },
+  "category_id": "86563",
+  "category_ids": [
+    "86562",
+    "86563"
+  ],
+  "category_path": [
+    "Серверы и опции",
+    "Rack-серверы"
+  ],
+  "family_id": null,
+  "family_name": null,
+  "description": "",
+  "search_text": "Сервер INFERIT RS108 R1G2D24/1x4216/2x16GB/4x240GB/9361-8i/2x800W\nИнферит\nСерверы и опции > Rack-серверы\nТип продукта: электроника\nТип поставки: физическая",
+  "os": [],
+  "country": null,
+  "license_unit_type": null,
+  "min_purchase": null,
+  "license_type": null,
+  "product_type": "hardware",
+  "source_currency": "RUR",
+  "source_date": "2026-11-25 14:12",
+  "data_warnings": []
+}

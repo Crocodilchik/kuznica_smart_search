@@ -1,0 +1,3 @@
+# Keep the handoff package byte-identical to its checksums on every platform.
+handoff/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+*.zip binary
