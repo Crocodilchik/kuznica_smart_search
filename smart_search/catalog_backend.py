@@ -176,6 +176,52 @@ def category_names() -> dict[str, str]:
         }
 
 
+_TYPE_CATEGORY_EXACT_NAMES: dict[str, set[str]] = {
+    "монитор": {"мониторы"},
+    "ноутбук": {"ноутбуки"},
+    "блок питания": {"блоки питания"},
+    "ибп": {"ибп", "ибп (источники бесперебойного питания)"},
+    "мышь": {"клавиатуры, мыши, комплекты"},
+    "клавиатура": {"клавиатуры, мыши, комплекты"},
+    "принтер": {"принтеры и мфу", "принтеры"},
+    "коммутатор": {"коммутаторы"},
+    "роутер": {"wi-fi роутеры", "проводные роутеры", "3g/lte-роутеры"},
+    "веб-камера": {"вебкамеры", "веб-камеры"},
+    "вебкамера": {"вебкамеры", "веб-камеры"},
+    "ssd": {"внутренние твердотельные накопители (ssd)"},
+    "сервер": {"rack-серверы", "tower-серверы", "blade-серверы", "микросерверы", "серверы"},
+    "антивирус": {
+        "антивирусы для организаций",
+        "антивирусы для дома",
+        "антивирусное по",
+    },
+    "операционная система": {
+        "операционные системы",
+        "операционные системы windows",
+        "операционные системы linux & unix",
+        "российские операционные системы (импортозамещение)",
+    },
+}
+
+
+def resolve_type_category_hints(product_type_hint: str | None) -> list[str]:
+    """Map canonical product_type_hint to exact offer-bearing catalog category IDs."""
+    key = (product_type_hint or "").strip().casefold()
+    targets = _TYPE_CATEGORY_EXACT_NAMES.get(key)
+    if not targets:
+        return []
+    try:
+        with _access() as engine:
+            return [
+                category["id"]
+                for category in engine.catalog.categories
+                if category.get("offer_count", 0) > 0
+                and category["name"].strip().casefold() in targets
+            ]
+    except ConnectionError:
+        return []
+
+
 def resolve_category(category: str | None) -> list[str] | None:
     """Resolve a query filter to catalog IDs, including ancestors and aliases."""
     if not category:

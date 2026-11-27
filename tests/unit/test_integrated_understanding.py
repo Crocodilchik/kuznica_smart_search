@@ -183,3 +183,18 @@ def test_complex_fallback_preserves_hard_constraints(monkeypatch):
     assert spec.hard_filters.os == "Linux"
     assert spec.hard_filters.max_total_price_kopecks == 400000
     assert spec.warnings
+
+
+def test_non_monetary_units_are_never_parsed_as_price_and_type_hints_populate(monkeypatch):
+    monkeypatch.setattr(
+        "smart_search.understanding.resolve_type_category_hints",
+        lambda t: ["74887"] if t == "блок питания" else [],
+    )
+    spec = understand(SearchRequest(query="хочу золотой блок питания от 750 ватт"))
+    assert spec.hard_filters.min_total_price_kopecks is None
+    assert spec.product_type_hint == "блок питания"
+    assert spec.category_hints == ["74887"]
+
+    mon_spec = understand(SearchRequest(query="монитор от 27 дюймов до 45 тыс"))
+    assert mon_spec.hard_filters.min_total_price_kopecks is None
+    assert mon_spec.hard_filters.max_total_price_kopecks == 4_500_000

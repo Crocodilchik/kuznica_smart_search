@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from pydantic import ValidationError
 
-from smart_search.catalog_backend import resolve_category
+from smart_search.catalog_backend import resolve_category, resolve_type_category_hints
 from smart_search.contracts import HardFilters, Preferences, QuerySpec, SearchRequest
 from smart_search.llm.exceptions import LLMError
 from smart_search.model_client import complete_json
@@ -67,6 +67,12 @@ PRODUCT_TYPE_PATTERNS = (
     (r"(?:^|\b(?:нужен|подберите|найти|купить)\s+)сервер(?:ы|а)?\b", "сервер"),
     (r"\bибп\b|бесперебойн\w+\s+питани", "ибп"),
     (r"\bноутбук\w*\b", "ноутбук"),
+    (r"\b(?:блок\w*\s+питания|бп)\b", "блок питания"),
+    (r"\bпринтер\w*\b|\bмфу\b", "принтер"),
+    (r"\b(?:коммутатор\w*|свитч\w*|свич\w*)\b", "коммутатор"),
+    (r"\bроутер\w*\b|\bмаршрутизатор\w*\b", "роутер"),
+    (r"\bвеб-?камер\w*\b", "веб-камера"),
+    (r"\bssd\b|твердотельн\w+\s+накопител", "ssd"),
 )
 
 PROMPT = """Ты — главный ИИ-маршрутизатор и интерпретатор запросов интернет-магазина ИТ-продуктов Store.softline.ru.
@@ -76,9 +82,9 @@ PROMPT = """Ты — главный ИИ-маршрутизатор и инте�
 1. Понять смысл запроса пользователя (включая опечатки, жаргон, разговорный стиль, неверные предлоги вроде «да 10 тыщ»).
 2. Сохранить исходный текст в `raw_query`.
 3. Сформировать чистый, грамотный `normalized_query` для поиска:
-   - исправь опечатки и сленг («хачу мышку да 10 тыщ рублей» -> «компьютерная мышь», «моник» -> «монитор», «антивирь под винду» -> «антивирус Windows»);
+   - исправь опечатки, транслит и сленг («хачу мышку да 10 тыщ рублей» -> «компьютерная мышь», «моник» -> «монитор», «антивирь под винду» -> «антивирус Windows», «noutbuk dlya raboty do 80k» -> «ноутбук для работы»);
    - убери слова вроде «хочу», «купить», «подскажите», повторы и фразы о цене/бюджете;
-   - обязательно сохраняй точные названия моделей, бренды, версии с точками (5.0, 1.8, 2024) и важные характеристики (27 дюймов, 1920×1080, RGB).
+   - обязательно сохраняй точные названия моделей, бренды, версии с точками (5.0, 1.8, 2024) и важные характеристики (27 дюймов, 1920×1080, RGB, 750W).
 4. Самостоятельно выбери поисковый инструмент в `search_mode`:
    - "sku" — только если пользователь указал конкретный артикул (тогда скопируй его в `sku` дословно из текста).
    - "bm25" — если пользователь ввёл точное название продукта, бренд и модель, или конкретную версию ПО («КриптоПро CSP 5.0», «Astra Linux Special Edition», «AnyDesk»). Для bm25 ставь `score_threshold: null`.
@@ -98,6 +104,7 @@ PROMPT = """Ты — главный ИИ-маршрутизатор и инте�
 7. Извлеки ограничения в `hard_filters` (все денежные суммы ЦЕЛЫМИ ЧИСЛАМИ В КОПЕЙКАХ, т.е. рубли * 100):
    - `min_total_price_kopecks`: минимальная цена («от 10 тыс» -> 1000000);
    - `max_total_price_kopecks`: максимальный бюджет («да 10 тыщ» / «до 30к» -> 1000000 / 3000000);
+   - КРИТИЧНО: НИКОГДА не принимай технические характеристики с предлогами «от»/«до» за цену! Например: «от 750 ватт» (мощность БП), «от 27 дюймов» (диагональ), «на 8 портов», «от 144 Гц», «на 1 ТБ», «от 2 штук» — это НЕ деньги, для них `min_total_price_kopecks: null` и `max_total_price_kopecks: null`;
    - `os`: "Windows" | "Linux" | "macOS" | "Android" | "iOS" (НЕ ставь os, если ищут замену самой ОС, например «аналог Windows Server»);
    - `country`: "RU", если требуется российское/отечественное ПО или оборудование;
    - `devices`: целое положительное число устройств/ПК;
@@ -129,6 +136,12 @@ PROMPT = """Ты — главный ИИ-маршрутизатор и инте�
 
 Запрос: «что докупить к Astra Linux Special Edition 1.8?»
 Ответ: {"raw_query":"что докупить к Astra Linux Special Edition 1.8?","normalized_query":"Astra Linux Special Edition 1.8","intent":"complements","search_mode":"bm25"}
+
+Запрос: «noutbuk dlya raboty do 80k»
+Ответ: {"raw_query":"noutbuk dlya raboty do 80k","normalized_query":"ноутбук для работы","intent":"product_search","search_mode":"dense","score_threshold":0.35,"product_type_hint":"ноутбук","hard_filters":{"max_total_price_kopecks":8000000,"budget_scope":"primary"}}
+
+Запрос: «хочу золотой блок питания от 750 ватт»
+Ответ: {"raw_query":"хочу золотой блок питания от 750 ватт","normalized_query":"блок питания 80 PLUS Gold 750W","intent":"product_search","search_mode":"hybrid","score_threshold":0.3,"product_type_hint":"блок питания","required_terms":["80 PLUS Gold","750W"],"hard_filters":{}}
 
 Вход с контекстом (уточнение предыдущего товара): {"request": "а беспроводную до 5к?", "previous_context": "Предыдущий запрос: мышь"}
 Ответ: {"raw_query":"а беспроводную до 5к?","normalized_query":"беспроводная компьютерная мышь","intent":"product_search","search_mode":"dense","score_threshold":0.35,"product_type_hint":"мышь","required_terms":["беспроводная"],"hard_filters":{"max_total_price_kopecks":500000,"budget_scope":"primary"}}
@@ -182,7 +195,9 @@ def _prices(pattern: re.Pattern, text: str) -> list[re.Match]:
     for match in pattern.finditer(text):
         tail = text[match.end() :]
         if re.match(
-            rf"\s*(?:{DEVICE_NOUN}|шт\.?|год\w*|лет|мес\w*|дюйм\w*)\b", tail, re.IGNORECASE
+            rf"\s*(?:{DEVICE_NOUN}|шт\.?|год\w*|лет|мес\w*|дюйм\w*|ватт\w*|вт\b|w\b|порт\w*|гц\b|мгц\b|гб\b|тб\b|мм\b|см\b|дб\b|кг\b)",
+            tail,
+            re.IGNORECASE,
         ):
             continue
         # Require either explicit scale/currency or a plausible ruble amount (>= 100)
@@ -339,6 +354,10 @@ def understand(request: SearchRequest) -> QuerySpec:
     try:
         suggestion = complete_json(PROMPT, prompt, QuerySpec)
     except (LLMError, ValidationError, TimeoutError, ConnectionError):
+        if fallback.intent == "product_search" and not fallback.sku and not fallback.category_hints:
+            hints = resolve_type_category_hints(fallback.product_type_hint)
+            if hints:
+                fallback = fallback.model_copy(update={"category_hints": hints[:4]})
         return fallback.model_copy(update={"warnings": ["understanding_llm_fallback"]})
 
     # DeepSeek is in charge: only backfill None fields from fallback rules and guard against hallucinated SKUs.
@@ -363,6 +382,10 @@ def understand(request: SearchRequest) -> QuerySpec:
                 resolved = ids[0] if len(ids) == 1 else hint
                 if resolved not in hints:
                     hints.append(resolved)
+        if not hints and intent == "product_search":
+            hints = resolve_type_category_hints(
+                suggestion.product_type_hint or fallback.product_type_hint
+            )
 
     hard = fallback.hard_filters.model_dump(exclude_none=True) | suggestion.hard_filters.model_dump(
         exclude_none=True
@@ -385,7 +408,7 @@ def understand(request: SearchRequest) -> QuerySpec:
         intent=intent,
         sku=sku,
         category=verified_category,
-        category_hints=hints[:3],
+        category_hints=hints[:4],
         search_mode=search_mode,
         score_threshold=score_threshold,
         product_type_hint=suggestion.product_type_hint,
