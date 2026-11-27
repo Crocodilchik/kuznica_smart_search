@@ -214,3 +214,37 @@ def test_understanding_timeout_ends_without_dropping_customer_constraints():
 
     assert response.status == "unavailable"
     assert "understanding_unavailable" in response.warnings
+
+
+def test_supervisor_uses_deepseek_search_mode_and_relaxes_dense_threshold_on_retry():
+    calls = []
+    constraints = HardFilters(max_total_price_kopecks=1_000_000)
+
+    def understand(item):
+        return QuerySpec(
+            raw_query=item.query,
+            normalized_query="компьютерная мышь",
+            search_mode="dense",
+            score_threshold=0.4,
+            hard_filters=constraints,
+        )
+
+    def search(params):
+        calls.append(params)
+        if len(calls) == 1:
+            return SearchResult(hits=products("m1"), diagnostics={"exhausted": True})
+        return SearchResult(hits=products("m1", "m2", "m3", "m4"))
+
+    def validate(spec, results, recommendations, evidence):
+        return ValidationResult(products=[hit.product for hit in results.hits])
+
+    runner = build_search(demo_services(understand=understand, search=search, validate=validate))
+    response = runner(request("хачу мышку да 10 тыщ рублей"))
+
+    assert response.status == "ok"
+    assert response.retry_count == 1
+    assert calls[0].mode == "dense" and calls[0].query_spec.score_threshold == 0.4
+    assert calls[1].mode == "hybrid" and calls[1].query_spec.score_threshold is None
+    assert all(c.query_spec.hard_filters == constraints for c in calls)
+    assert "route:threshold_fallback" in response.steps
+    assert "route:hybrid_fallback" in response.steps

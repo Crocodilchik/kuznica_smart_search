@@ -10,48 +10,54 @@ def offline(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
 
 
-def test_slang_and_kopecks_survive_without_a_model():
+def test_slang_and_kopecks_survive_in_fallback_without_a_model():
     request = SearchRequest(query="Российский антивирь для винды на 50 компов в наличии до 100к")
     spec = understand(request)
     assert spec.raw_query == request.query
-    assert spec.category == "endpoint_security"
+    assert spec.category is None
     assert spec.intent == "product_search"
     assert spec.hard_filters.model_dump() == {
         "os": "Windows",
         "country": "RU",
         "devices": 50,
+        "min_total_price_kopecks": None,
         "max_total_price_kopecks": 10_000_000,
         "budget_scope": "primary",
         "in_stock": True,
     }
-    assert not spec.warnings
+    assert spec.warnings == ["understanding_llm_fallback"]
 
 
 @pytest.mark.parametrize("repeat", [1, 2])
-def test_monitor_slang_keeps_the_budget_out_of_the_search_text(monkeypatch, repeat):
-    monkeypatch.setattr(
-        "smart_search.understanding.resolve_category",
-        lambda category: ["80843"] if category == "Компьютерная периферия > Мониторы" else [],
-    )
+def test_monitor_slang_keeps_the_budget_out_of_the_search_text(repeat):
     request = SearchRequest(query=" ".join(["хочу моник купит до 30 тыс"] * repeat))
     spec = understand(request)
     assert spec.raw_query == request.query
-    assert spec.category == "80843"
+    assert spec.category is None
+    assert spec.product_type_hint == "монитор"
     assert spec.normalized_query == "монитор"
     assert spec.hard_filters.max_total_price_kopecks == 3_000_000
-    assert not spec.warnings
+    assert spec.warnings == ["understanding_llm_fallback"]
 
 
-def test_rgb_mouse_query_uses_the_actual_catalog_category(monkeypatch):
-    monkeypatch.setattr(
-        "smart_search.understanding.resolve_category",
-        lambda category: (
-            ["82833"] if category == "Компьютерная периферия > Клавиатуры, мыши, комплекты" else []
-        ),
-    )
+def test_rgb_mouse_fallback_captures_type_and_feature_without_category_lock():
     spec = understand(SearchRequest(query="хочу мышку настольную купить с ргб подсветкой"))
-    assert spec.category == "82833"
+    assert spec.category is None
+    assert spec.product_type_hint == "мышь"
+    assert spec.required_terms == ["RGB"]
     assert spec.normalized_query == "мышь RGB"
+
+
+def test_min_price_floor_is_extracted_in_fallback_without_catching_units():
+    spec = understand(SearchRequest(query="хочу клавиатуру от 10 тыс с ргб"))
+    assert spec.category is None
+    assert spec.product_type_hint == "клавиатура"
+    assert spec.required_terms == ["RGB"]
+    assert spec.hard_filters.min_total_price_kopecks == 1_000_000
+    assert spec.hard_filters.max_total_price_kopecks is None
+
+    unit_spec = understand(SearchRequest(query="лицензия от 2 шт."))
+    assert unit_spec.hard_filters.min_total_price_kopecks is None
 
 
 @pytest.mark.parametrize(
@@ -92,53 +98,64 @@ def test_ambiguous_negated_constraint_needs_clarification():
     assert spec.clarifying_question
 
 
-def test_explicit_server_category_overrides_backup_use_case():
-    spec = understand(SearchRequest(query="Сервер для резервного копирования до 300 тысяч"))
-    assert spec.category == "server_hardware"
-    assert spec.category_hints == []
-    assert spec.hard_filters.max_total_price_kopecks == 30_000_000
+def test_deepseek_controls_short_and_slang_queries_directly(monkeypatch):
+    calls = []
 
-
-def test_ambiguous_use_cases_limit_only_the_first_search():
-    spec = understand(SearchRequest(query="Резервное копирование и виртуализация"))
-    assert spec.category is None
-    assert spec.category_hints == ["backup", "virtualization"]
-
-
-def test_model_category_is_a_verified_hint(monkeypatch):
     def complete(system_prompt, user_prompt, schema):
-        return schema(
-            raw_query="text",
-            normalized_query="сетевой мониторинг",
-            category="Net",
-            category_hints=["bad"],
+        calls.append(user_prompt)
+        return schema.model_validate(
+            {
+                "raw_query": "хачу мышку да 10 тыщ рублей",
+                "normalized_query": "компьютерная мышь",
+                "intent": "product_search",
+                "search_mode": "dense",
+                "score_threshold": 0.35,
+                "product_type_hint": "мышь",
+                "hard_filters": {"max_total_price_kopecks": 1_000_000, "budget_scope": "primary"},
+            }
         )
 
     monkeypatch.setattr("smart_search.understanding.complete_json", complete)
-    monkeypatch.setattr(
-        "smart_search.understanding.resolve_category",
-        lambda category: ["123"] if category == "Net" else [],
-    )
-    spec = understand(SearchRequest(query="Нужно видеть кто отключился от сети в филиалах"))
+    spec = understand(SearchRequest(query="хачу мышку да 10 тыщ рублей"))
+    assert len(calls) == 1
     assert spec.category is None
-    assert spec.category_hints == ["123"]
+    assert spec.normalized_query == "компьютерная мышь"
+    assert spec.search_mode == "dense"
+    assert spec.score_threshold == 0.35
+    assert spec.product_type_hint == "мышь"
+    assert spec.hard_filters.max_total_price_kopecks == 1_000_000
+    assert not spec.warnings
 
 
-def test_price_is_a_filter_and_product_version_remains_searchable():
-    spec = understand(SearchRequest(query="КриптоПро CSP 5.0 до 1200.50 руб."))
+def test_deepseek_can_choose_bm25_and_threshold_is_ignored_for_bm25(monkeypatch):
+    def complete(system_prompt, user_prompt, schema):
+        return schema.model_validate(
+            {
+                "raw_query": "КриптоПро CSP 5.0",
+                "normalized_query": "КриптоПро CSP 5.0",
+                "intent": "product_search",
+                "search_mode": "bm25",
+                "score_threshold": 0.4,
+            }
+        )
+
+    monkeypatch.setattr("smart_search.understanding.complete_json", complete)
+    spec = understand(SearchRequest(query="КриптоПро CSP 5.0"))
+    assert spec.search_mode == "bm25"
+    assert spec.score_threshold is None
     assert spec.normalized_query == "КриптоПро CSP 5.0"
-    assert spec.hard_filters.max_total_price_kopecks == 120050
 
 
-def test_model_can_resolve_complex_search_without_overwriting_known_filters(monkeypatch):
+def test_deepseek_constraints_override_regex_while_missing_fields_backfill(monkeypatch):
     def complete(system_prompt, user_prompt, schema):
         return schema.model_validate(
             {
                 "raw_query": "modified",
                 "normalized_query": "сетевой мониторинг",
                 "intent": "product_search",
+                "search_mode": "hybrid",
                 "category": "fabricated-id",
-                "hard_filters": {"max_total_price_kopecks": 999999999},
+                "hard_filters": {"min_total_price_kopecks": 200000},
             }
         )
 
@@ -150,6 +167,7 @@ def test_model_can_resolve_complex_search_without_overwriting_known_filters(monk
     assert spec.normalized_query == "сетевой мониторинг"
     assert spec.raw_query == request.query
     assert spec.category is None
+    assert spec.hard_filters.min_total_price_kopecks == 200000
     assert spec.hard_filters.max_total_price_kopecks == 900000
     assert not spec.warnings
 

@@ -140,7 +140,14 @@ def build_search(
         if retry and previous is not None and previous.diagnostics.get("category_hints_applied"):
             lookup = lookup.model_copy(update={"category_hints": []})
             steps = [*steps, "route:category_fallback"]
-        mode = "sku" if spec.sku else search_mode
+        mode = "sku" if spec.sku else (spec.search_mode or search_mode)
+        if retry and not spec.sku:
+            if lookup.score_threshold is not None:
+                lookup = lookup.model_copy(update={"score_threshold": None})
+                steps = [*steps, "route:threshold_fallback"]
+            if mode == "dense":
+                mode = "hybrid"
+                steps = [*steps, "route:hybrid_fallback"]
         params = SearchParams(query_spec=lookup, mode=mode, top_k=30 if retry else 12)
         try:
             current = services.search(params)
@@ -225,7 +232,9 @@ def build_search(
             "warnings", []
         ):
             return "done"
-        return "recommend"
+        if state["spec"].intent in {"alternatives", "complements", "solution"}:
+            return "recommend"
+        return after_validation(state)
 
     def after_recommend(state: AgentState) -> str:
         return (
@@ -241,7 +250,12 @@ def build_search(
         if _status(state) == "unavailable":
             return "done"
         diagnostics = state["search_result"].diagnostics
-        if diagnostics.get("exhausted") is True and not diagnostics.get("category_hints_applied"):
+        can_relax = bool(
+            diagnostics.get("category_hints_applied")
+            or spec.score_threshold is not None
+            or spec.search_mode == "dense"
+        )
+        if diagnostics.get("exhausted") is True and not can_relax:
             return "done"
         if validation.needs_retry or _result_count(spec, validation) < 4:
             return "retry"
@@ -262,7 +276,7 @@ def build_search(
     graph.add_conditional_edges("understand", after_understand, {"search": "search", "done": END})
     graph.add_edge("search", "validate_primary")
     graph.add_conditional_edges(
-        "validate_primary", after_primary, {"recommend": "recommend", "done": END}
+        "validate_primary", after_primary, {"recommend": "recommend", "retry": "retry", "done": END}
     )
     graph.add_conditional_edges(
         "recommend", after_recommend, {"research": "research", "retry": "retry", "done": END}
