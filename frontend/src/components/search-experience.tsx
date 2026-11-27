@@ -26,11 +26,12 @@ type StoreProduct = {
   image: string;
   price: number;
   url: string;
+  reviews?: { rating: string; label: string };
 };
 
 const bannerSlides = [
   { image: "/softline-store/hero-01.png", alt: "Решения для резервного копирования Softline Cloud" },
-  { image: "/softline-store/hero-02.png", alt: "Специальное предложение Softline Store" },
+  { image: "/softline-store/hero-02.png", alt: "Ideco — защита сетей и фильтрация трафика" },
   { image: "/softline-store/hero-03.png", alt: "Антивирус PRO32 со скидкой" },
   { image: "/softline-store/hero-04.png", alt: "Акции интернет-магазина Softline" },
   { image: "/softline-store/hero-05.png", alt: "VK WorkSpace для совместной работы" },
@@ -47,6 +48,7 @@ const storeProducts: StoreProduct[] = [
     price: 3318.21,
     url: "https://store.softline.ru/kaspersky/kl4863lakfs-4982/",
     sku: "KL4863RAKFS",
+    reviews: { rating: "4,5", label: "2 отзыва" },
   },
   {
     id: "microsoft-family",
@@ -56,6 +58,7 @@ const storeProducts: StoreProduct[] = [
     price: 11247,
     url: "https://store.softline.ru/microsoft/6gq-00084-195981/",
     sku: "6GQ-00084",
+    reviews: { rating: "4,8", label: "30 отзывов" },
   },
   {
     id: "cryptopro-workstation",
@@ -64,6 +67,7 @@ const storeProducts: StoreProduct[] = [
     image: "/softline-store/cryptopro-workstation.png",
     price: 1850,
     url: "https://store.softline.ru/kripto-pro/-411620/",
+    reviews: { rating: "5,0", label: "6 отзывов" },
   },
   {
     id: "microsoft-personal",
@@ -73,6 +77,7 @@ const storeProducts: StoreProduct[] = [
     price: 9103,
     url: "https://store.softline.ru/microsoft/qq2-00004-195982/",
     sku: "QQ2-00004",
+    reviews: { rating: "5,0", label: "25 отзывов" },
   },
   {
     id: "astra-linux",
@@ -82,6 +87,7 @@ const storeProducts: StoreProduct[] = [
     price: 12000,
     url: "https://store.softline.ru/astralinux/os2200x8618digsktws01-so12-489919/",
     sku: "OS2200X8618DIGSKTWS01-SO12",
+    reviews: { rating: "5,0", label: "4 отзыва" },
   },
   {
     id: "popular-2410137",
@@ -177,6 +183,17 @@ const storeSections = [
       { href: "https://store.softline.ru/kaspersky/?filter[category][]=3656", title: "Сеть и интернет" },
     ],
   },
+];
+
+const storeBrands = [
+  ["Microsoft", "microsoft", "microsoft.png"],
+  ["Лаборатория Касперского", "kaspersky", "kaspersky.png"],
+  ["КриптоПро", "kripto-pro", "cryptopro.png"],
+  ["Группа Астра", "astralinux", "astra.png"],
+  ["Adobe", "adobe", "adobe.png"],
+  ["Apple", "apple", "apple.png"],
+  ["Lenovo", "lenovo", "lenovo.png"],
+  ["Samsung", "samsung", "samsung.png"],
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -476,6 +493,11 @@ function StaticProductCard({
       <div className="storeProductCopy">
         <p className="storeProductBrand">{product.brand}</p>
         <h3><a href={product.url}>{product.title}</a></h3>
+        {product.reviews && (
+          <p className="storeProductReviews">
+            {product.reviews.rating} <span aria-hidden="true">★</span> <small>{product.reviews.label}</small>
+          </p>
+        )}
         <p className="storeProductPrice">{formatStorePrice(product.price)}</p>
         <button className="addToCartButton" type="button" onClick={onAdd}>
           В корзину <span aria-hidden="true">→</span>
@@ -574,7 +596,7 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
   const [response, setResponse] = useState<SearchResponse | null>(null);
   const [searchError, setSearchError] = useState("");
   const [previousContext, setPreviousContext] = useState<string | null>(null);
-  const [activeSlide, setActiveSlide] = useState(4);
+  const [activeSlide, setActiveSlide] = useState(0);
   const productRail = useRef<HTMLDivElement>(null);
   const [cartCount, setCartCount] = useState(0);
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
@@ -630,6 +652,31 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
       conversationRef.current.scrollTop = conversationRef.current.scrollHeight;
     }
   }, [agentMessages, agentLoading, agentOpen]);
+
+  const agentDockRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const dock = agentDockRef.current;
+    const viewport = window.visualViewport;
+    if (!agentOpen || !dock || !viewport) return;
+
+    function updateViewport() {
+      if (!dock || !viewport) return;
+      const bottomInset = Math.max(0, document.documentElement.clientHeight - viewport.height - viewport.offsetTop);
+      dock.style.setProperty("--agent-viewport-height", viewport.height + "px");
+      dock.style.setProperty("--agent-viewport-inset", bottomInset + "px");
+    }
+
+    updateViewport();
+    viewport.addEventListener("resize", updateViewport);
+    viewport.addEventListener("scroll", updateViewport);
+    return () => {
+      viewport.removeEventListener("resize", updateViewport);
+      viewport.removeEventListener("scroll", updateViewport);
+      dock.style.removeProperty("--agent-viewport-height");
+      dock.style.removeProperty("--agent-viewport-inset");
+    };
+  }, [agentOpen]);
 
   async function callSearch(queryText: string, context: string | null): Promise<SearchResponse> {
     const activeSessionId = sessionId || getSessionId();
@@ -735,7 +782,7 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
           <a className="storeLogo" href="#top" aria-label="Softline Store — главная">
             <img src="/softline-store/store-header-logo.svg" width="188" height="32" alt="Софтлайн — Цифровой актив" />
           </a>
-          <span className="storeCity"><StoreIcon name="map-marker" /> Новосибирск</span>
+          <span className="storeCity"><StoreIcon name="map-marker" /> Ростов-на-Дону</span>
           <div className="utilityLinks">
             <a href="https://softline.ru/">Softline.ru</a>
             <a href="https://store.softline.ru/writeorder/">Запрос цены</a>
@@ -756,7 +803,7 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
               id="store-search"
               value={query}
               maxLength={1000}
-              placeholder={smartEnabled ? "Опишите, что хотите подобрать" : "Товар, производитель или артикул"}
+              placeholder={smartEnabled ? "Опишите, что хотите подобрать" : "Продукт, производитель или артикул (SKU)"}
               onChange={(event) => setQuery(event.target.value)}
               required
             />
@@ -879,6 +926,19 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
           </section>
         ))}
 
+        <section className="storeTopic" aria-labelledby="brands-heading">
+          <h2 id="brands-heading">Производители</h2>
+          <ul className="brandRail">
+            {storeBrands.map(([name, slug, image]) => (
+              <li key={slug}>
+                <a href={"https://store.softline.ru/" + slug + "/"}>
+                  <img src={"/softline-store/brand-" + image} alt={name} loading="lazy" />
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+
         <section className="storeTopic aboutCopy" id="about">
           <h2>О магазине Softline</h2>
           <p>Интернет-магазин Softline Store предлагает большой ассортимент лицензионного программного обеспечения и электроники от ведущих производителей. Здесь вы найдете все необходимое: от популярных офисных программ до систем безопасности и современной компьютерной техники.</p>
@@ -892,31 +952,59 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
           </div>
         </section>
 
-        <footer className="storeFooter" id="footer">
-          <a className="footerLogo" href="#top"><img src="/softline-store/store-header-logo.svg" alt="Софтлайн" /></a>
-          <p>Интернет-магазин лицензионного программного обеспечения и электроники</p>
-          <nav className="footerLinks" aria-label="Информация о магазине">
+      </div>
+
+      <footer className="storeFooter" id="footer">
+        <div className="storeContainer">
+          <div className="footerMain">
+            <div className="footerContacts">
+              <a href="mailto:sales.r@softline.com">sales.r@softline.com</a>
+              <a href="tel:88002000860">8 (800) 200-08-60</a>
+              <address>ПАО «Софтлайн».<br />Юр. адрес: 119021, г. Москва, ул. Льва Толстого, дом 5, строение 1, этаж 3, помещение 1, комн. № 2, 2а (А-311)</address>
+            </div>
+            <nav className="footerLinks" aria-label="Информация о магазине">
+            <div>
             <a href="https://store.softline.ru/catalog/">Каталог</a>
             <a href="https://store.softline.ru/pricelists/">Прайс-листы</a>
             <a href="https://store.softline.ru/vendors/">Производители</a>
             <a href="https://store.softline.ru/specials/">Специальные предложения</a>
             <a href="https://softline.ru/solutions/support/basic-support">Техподдержка</a>
+            </div>
+            <div>
             <a href="https://store.softline.ru/sale/">Распродажа</a>
             <a href="https://softline.ru/events">Семинары и вебинары</a>
             <a href="https://files.softline.com/fileStorage/partnerskaia-programma-dlia-vendorov.pdf">Стать партнером</a>
             <a href="https://vendors.softline.ru/">Вход в ЛК партнера</a>
             <a href="https://store.softline.ru/about/">О компании</a>
+            </div>
+            <div>
             <a href="https://softline.ru/about/vacancies">Вакансии</a>
             <a href="https://store.softline.ru/delivery_info/">Помощь</a>
             <a href="https://softline.com/">Группа компаний Softline</a>
-          </nav>
-          <small>© Softline Store</small>
-        </footer>
-      </div>
+            </div>
+            </nav>
+            <nav className="footerSocial" aria-label="Социальные сети">
+              <a href="https://t.me/Softline">Telegram</a>
+              <a href="https://rutube.ru/u/softline/">Rutube</a>
+              <a href="https://vk.com/softlinecompany">ВКонтакте</a>
+              <a href="https://max.ru/Softline">MAX</a>
+            </nav>
+          </div>
+          <div className="footerLegal">
+            <span className="storeCity"><StoreIcon name="map-marker" /> Ростов-на-Дону</span>
+            <span>© 1993—2026 Softline</span>
+            <a href="https://softline.ru/copy">Условия использования</a>
+            <a href="https://store.softline.ru/privacy-policy/">Политика конфиденциальности</a>
+            <a href="https://store.softline.ru/sale-rules/">Правила продажи</a>
+            <strong>14+</strong>
+          </div>
+          <p className="footerNotice">На информационном ресурсе store.softline.ru применяются <a href="https://store.softline.ru/recomendations_rules/">рекомендательные технологии</a> (информационные технологии предоставления информации на основе сбора, систематизации и анализа сведений, относящихся к предпочтениям пользователей сети «Интернет», находящихся на территории Российской Федерации)</p>
+        </div>
+      </footer>
 
       <a className="feedbackTab" href="https://store.softline.ru/contacts/">Отзыв о сайте</a>
 
-      <aside className="agentDock" aria-label="AI-агент по подбору товаров">
+      <aside ref={agentDockRef} className="agentDock" aria-label="AI-агент по подбору товаров">
         {agentOpen && (
           <section className="agentWindow" aria-labelledby="agent-title">
             <header className="agentHeader">
