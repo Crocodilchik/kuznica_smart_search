@@ -60,6 +60,7 @@ class QuerySpec(Contract):
     intent: Intent = "product_search"
     sku: str | None = None
     category: str | None = None
+    category_hints: list[NonEmptyText] = Field(default_factory=list, max_length=3)
     hard_filters: HardFilters = Field(default_factory=HardFilters)
     preferences: Preferences = Field(default_factory=Preferences)
     clarifying_question: str | None = None

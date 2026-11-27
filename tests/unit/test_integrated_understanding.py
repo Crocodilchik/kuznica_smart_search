@@ -65,6 +65,38 @@ def test_ambiguous_negated_constraint_needs_clarification():
     assert spec.clarifying_question
 
 
+def test_explicit_server_category_overrides_backup_use_case():
+    spec = understand(SearchRequest(query="Сервер для резервного копирования до 300 тысяч"))
+    assert spec.category == "server_hardware"
+    assert spec.category_hints == []
+    assert spec.hard_filters.max_total_price_kopecks == 30_000_000
+
+
+def test_ambiguous_use_cases_limit_only_the_first_search():
+    spec = understand(SearchRequest(query="Резервное копирование и виртуализация"))
+    assert spec.category is None
+    assert spec.category_hints == ["backup", "virtualization"]
+
+
+def test_model_category_is_a_verified_hint(monkeypatch):
+    def complete(system_prompt, user_prompt, schema):
+        return schema(
+            raw_query="text",
+            normalized_query="сетевой мониторинг",
+            category="Net",
+            category_hints=["bad"],
+        )
+
+    monkeypatch.setattr("smart_search.understanding.complete_json", complete)
+    monkeypatch.setattr(
+        "smart_search.understanding.resolve_category",
+        lambda category: ["123"] if category == "Net" else [],
+    )
+    spec = understand(SearchRequest(query="Нужно видеть кто отключился от сети в филиалах"))
+    assert spec.category is None
+    assert spec.category_hints == ["123"]
+
+
 def test_price_is_a_filter_and_product_version_remains_searchable():
     spec = understand(SearchRequest(query="КриптоПро CSP 5.0 до 1200.50 руб."))
     assert spec.normalized_query == "КриптоПро CSP 5.0"

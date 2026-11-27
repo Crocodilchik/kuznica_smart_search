@@ -140,7 +140,9 @@ class SearchEngine:
             client.close()
             raise
 
-    def _branch(self, spec: QuerySpec, mode: str, categories: list[str] | None, top_k: int):
+    def _branch(
+        self, spec: QuerySpec, mode: str, categories: list[str] | None, top_k: int
+    ) -> tuple[list[tuple[Product, float]], bool]:
         self._open_index()
         assert self.client is not None and self.index is not None
         if mode == "bm25":
@@ -163,8 +165,9 @@ class SearchEngine:
         # Refill after checking minimum-purchase totals; never silently relax hard constraints.
         eligible = []
         offset = 0
-        batch_size = max(32, top_k)
-        while len(eligible) < top_k:
+        batch_size = max(32, top_k + 1)
+        # Look one eligible hit past the limit to prove whether expanding can help.
+        while len(eligible) <= top_k:
             points = self.client.query_points(
                 self.index["collection"],
                 query=query,
@@ -182,7 +185,7 @@ class SearchEngine:
             if len(points) < batch_size:
                 break
             offset += len(points)
-        return eligible[:top_k]
+        return eligible[:top_k], len(eligible) <= top_k
 
     def search(self, params: SearchParams | dict) -> SearchResult:
         if not isinstance(params, SearchParams):
@@ -190,10 +193,15 @@ class SearchEngine:
         started = time.perf_counter()
         spec = params.query_spec
         warnings = []
-        diagnostics = {"mode": params.mode, "source_date": self.catalog.manifest["source_date"]}
+        diagnostics = {
+            "mode": params.mode,
+            "source_date": self.catalog.manifest["source_date"],
+            "category_hints_applied": False,
+        }
         categories = self.catalog.resolve_category(spec.category)
         if categories == []:
             diagnostics["latency_ms"] = round((time.perf_counter() - started) * 1000, 3)
+            diagnostics["exhausted"] = True
             return SearchResult(
                 status="empty", warnings=["category_unresolved"], diagnostics=diagnostics
             )
@@ -205,10 +213,23 @@ class SearchEngine:
             diagnostics.update(
                 backend="catalog_metadata",
                 latency_ms=round((time.perf_counter() - started) * 1000, 3),
+                exhausted=True,
             )
             return SearchResult(
                 status="empty", warnings=["country_unknown_in_catalog"], diagnostics=diagnostics
             )
+        if categories is None and params.mode != "sku" and spec.category_hints:
+            categories = (
+                list(
+                    dict.fromkeys(
+                        item
+                        for hint in spec.category_hints
+                        for item in self.catalog.resolve_category(hint) or []
+                    )
+                )
+                or None
+            )
+            diagnostics["category_hints_applied"] = categories is not None
         if spec.hard_filters.budget_scope == "bundle":
             warnings.append("bundle_total_requires_validation")
         if spec.hard_filters.devices is not None:
@@ -218,6 +239,7 @@ class SearchEngine:
         ranking = []
         branch_scores: dict[str, dict[str, float]] = {}
         status = "ok"
+        exhausted = False
         try:
             if params.mode == "sku":
                 sku = spec.sku or spec.normalized_query.strip()
@@ -225,16 +247,23 @@ class SearchEngine:
                     (product, 1.0)
                     for product in self.catalog.by_sku(sku)
                     if matches_filters(product, spec, categories)
-                ][: params.top_k]
+                ]
+                exhausted = len(ranking) <= params.top_k
+                ranking = ranking[: params.top_k]
                 diagnostics["backend"] = "sqlite_exact_sku"
             elif not lexical_text(spec.normalized_query):
                 warnings.append("query_has_no_search_terms")
+                exhausted = True
             elif params.mode == "hybrid":
                 rankings = []
+                exhausted_branches = []
                 for mode in ("bm25", "dense"):
                     try:
-                        branch = self._branch(spec, mode, categories, max(100, params.top_k))
+                        branch, exhausted_branch = self._branch(
+                            spec, mode, categories, max(100, params.top_k)
+                        )
                         rankings.append(branch)
+                        exhausted_branches.append(exhausted_branch)
                         for product, score in branch:
                             branch_scores.setdefault(product.product_id, {})[mode] = score
                     except (
@@ -248,9 +277,13 @@ class SearchEngine:
                     status = "unavailable"
                 elif len(rankings) < 2:
                     status = "partial"
-                ranking = rrf(rankings)[: params.top_k]
+                ranking = rrf(rankings)
+                exhausted = (
+                    status == "ok" and all(exhausted_branches) and len(ranking) <= params.top_k
+                )
+                ranking = ranking[: params.top_k]
             else:
-                ranking = self._branch(spec, params.mode, categories, params.top_k)
+                ranking, exhausted = self._branch(spec, params.mode, categories, params.top_k)
         except (ValueError, OSError, UnexpectedResponse, ResponseHandlingException) as error:
             warnings.append(f"search_unavailable: {error}")
             status = "unavailable"
@@ -265,6 +298,7 @@ class SearchEngine:
                 warnings.append("index_contains_catalog_subset")
         if not ranking and status == "ok":
             status = "empty"
+        diagnostics["exhausted"] = exhausted
         diagnostics["latency_ms"] = round((time.perf_counter() - started) * 1000, 3)
         return SearchResult(
             hits=[

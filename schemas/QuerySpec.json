@@ -164,6 +164,14 @@
       "default": null,
       "title": "Category"
     },
+    "category_hints": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 3,
+      "title": "Category Hints",
+      "type": "array"
+    },
     "hard_filters": {
       "$ref": "#/$defs/HardFilters"
     },

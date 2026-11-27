@@ -3,7 +3,33 @@ x-image: &app-image
   build:
     context: .
 
+x-search-storage: &search-storage
+  SOFTLINE_CATALOG_DIR: /var/lib/smart-search/catalog
+  SOFTLINE_INDEX_DIR: /var/lib/smart-search/qdrant-server
+  QDRANT_URL: ${SMART_SEARCH_COMPOSE_QDRANT_URL:-http://qdrant:6333}
+  QDRANT_API_KEY: ${SMART_SEARCH_COMPOSE_QDRANT_API_KEY:-}
+
 services:
+  qdrant:
+    image: qdrant/qdrant:v1.20.0
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -ec
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/6333;
+          printf 'GET /readyz HTTP/1.0\r\n\r\n' >&3;
+          read -r status <&3;
+          [[ "$$status" == *" 200 "* ]]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
   api:
     <<: *app-image
     init: true
@@ -11,12 +37,14 @@ services:
       - path: .env
         required: false
     environment:
+      <<: *search-storage
       SMART_SEARCH_MODE: prod
       SMART_SEARCH_BACKEND_MODULE: smart_search.backend
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      SOFTLINE_CATALOG_DIR: /var/lib/smart-search/catalog
-      SOFTLINE_INDEX_DIR: /var/lib/smart-search/qdrant
       SMART_SEARCH_EVENT_DB: /var/lib/smart-search/events.sqlite3
+    depends_on:
+      qdrant:
+        condition: service_healthy
     ports:
       - "127.0.0.1:${SMART_SEARCH_API_PORT:-8000}:8000"
     volumes:
@@ -63,7 +91,11 @@ services:
     profiles: [setup]
     working_dir: /var/lib/smart-search
     environment:
+      <<: *search-storage
       PYTHONPATH: /app
+    depends_on:
+      qdrant:
+        condition: service_healthy
     healthcheck:
       disable: true
     volumes:
@@ -78,8 +110,28 @@ services:
       - /bin/sh
       - -ec
       - |
-        python -X utf8 -m softline_search prepare /input/Mindbox.yml.gz.xml --output /var/lib/smart-search/catalog --reports /var/lib/smart-search/catalog-reports
-        python -X utf8 -m softline_search index --catalog /var/lib/smart-search/catalog --output /var/lib/smart-search/qdrant
+        python -X utf8 -m softline_search prepare /input/Mindbox.yml.gz.xml --output "$$SOFTLINE_CATALOG_DIR" --reports /var/lib/smart-search/catalog-reports
+        python -X utf8 -m softline_search index --catalog "$$SOFTLINE_CATALOG_DIR" --output "$$SOFTLINE_INDEX_DIR"
+
+  index:
+    <<: *app-image
+    profiles: [setup]
+    working_dir: /var/lib/smart-search
+    environment:
+      <<: *search-storage
+      PYTHONPATH: /app
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    volumes:
+      - search-data:/var/lib/smart-search
+    command:
+      - /bin/sh
+      - -ec
+      - exec python -X utf8 -m softline_search index --catalog "$$SOFTLINE_CATALOG_DIR" --output "$$SOFTLINE_INDEX_DIR"
 
 volumes:
   search-data:
+  qdrant-data:

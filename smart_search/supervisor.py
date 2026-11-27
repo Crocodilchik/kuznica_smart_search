@@ -135,6 +135,11 @@ def build_search(
         lookup = spec
         if spec.intent in RELATION_BY_INTENT:
             lookup = spec.model_copy(update={"hard_filters": HardFilters()})
+        previous = state.get("search_result")
+        steps = state.get("steps", [])
+        if retry and previous is not None and previous.diagnostics.get("category_hints_applied"):
+            lookup = lookup.model_copy(update={"category_hints": []})
+            steps = [*steps, "route:category_fallback"]
         mode = "sku" if spec.sku else search_mode
         params = SearchParams(query_spec=lookup, mode=mode, top_k=30 if retry else 12)
         try:
@@ -145,9 +150,10 @@ def build_search(
             current.warnings
         ):
             current = current.model_copy(update={"available": False})
-        previous = state.get("search_result")
+        if current.diagnostics.get("category_hints_applied") is True:
+            steps = [*steps, "route:category_hint"]
         merged = _merge_search(previous, current) if previous is not None else current
-        return {"search_result": merged, "steps": _step(state, f"search:{mode}")}
+        return {"search_result": merged, "steps": [*steps, f"search:{mode}"]}
 
     def validate_primary(state: AgentState) -> AgentState:
         if not state["search_result"].available:
@@ -233,6 +239,9 @@ def build_search(
         if (spec.intent == "exact_product" and spec.sku) or state["retry_count"]:
             return "done"
         if _status(state) == "unavailable":
+            return "done"
+        diagnostics = state["search_result"].diagnostics
+        if diagnostics.get("exhausted") is True and not diagnostics.get("category_hints_applied"):
             return "done"
         if validation.needs_retry or _result_count(spec, validation) < 4:
             return "retry"

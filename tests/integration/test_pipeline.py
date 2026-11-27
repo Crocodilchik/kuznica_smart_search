@@ -69,7 +69,7 @@ def test_relation_by_sku_reaches_batch_evidence_validation_and_analytics(pipelin
     response = client.post("/v1/search", json={"query": "Что докупить к UPS-A10?"})
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "partial" and body["retry_count"] == 1
+    assert body["status"] == "partial" and body["retry_count"] == 0
     assert "search:sku" in body["steps"] and "research" in body["steps"]
     assert [r["product"]["product_id"] for r in body["recommendations"]] == ["20"]
     evidence = body["recommendations"][0]["evidence"][0]

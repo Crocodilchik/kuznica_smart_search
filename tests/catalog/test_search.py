@@ -61,6 +61,37 @@ def test_sku_diagnostics_remain_correct_after_bm25(catalog, index):
         assert engine.search(request).diagnostics["backend"] == "sqlite_exact_sku"
 
 
+def test_exhaustion_distinguishes_truncation_from_end_of_candidates(catalog, index):
+    with SearchEngine(catalog.directory, index) as engine:
+        query = params()
+        query.top_k = 1
+        assert engine.search(query).diagnostics["exhausted"] is False
+        query.top_k = 30
+        assert engine.search(query).diagnostics["exhausted"] is True
+        assert engine.search(params("неизвестныйтермин")).diagnostics["exhausted"] is True
+
+
+def test_category_hints_limit_retrieval_to_union_of_resolved_subtrees(catalog, index):
+    with SearchEngine(catalog.directory, index) as engine:
+        query = params("защита сервер", in_stock=True)
+        query.query_spec.category_hints = ["2", "server_hardware", "unknown"]
+        result = engine.search(query)
+        assert result.diagnostics["category_hints_applied"] is True
+        assert {"1", "3"} <= {hit.product.product_id for hit in result.hits}
+        assert "2" not in {hit.product.product_id for hit in result.hits}
+
+        query.query_spec.category = "server_hardware"
+        strict = engine.search(query)
+        assert strict.diagnostics["category_hints_applied"] is False
+        assert [hit.product.product_id for hit in strict.hits] == ["3"]
+
+        query.query_spec.category = None
+        query.query_spec.category_hints = ["unknown"]
+        unresolved = engine.search(query)
+        assert unresolved.diagnostics["category_hints_applied"] is False
+        assert {hit.product.product_id for hit in unresolved.hits} >= {"1", "3"}
+
+
 def test_missing_index_differs_from_empty_and_sku_still_works(catalog, tmp_path):
     with SearchEngine(catalog.directory, tmp_path / "absent") as engine:
         assert engine.search(params()).status == "unavailable"

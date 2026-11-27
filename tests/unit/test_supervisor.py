@@ -90,6 +90,50 @@ def test_search_unavailable_differs_from_empty_and_failed_retry_keeps_products()
     assert "search_unavailable" in response.warnings
 
 
+def test_exhausted_candidates_skip_same_search_and_recommendations():
+    calls = []
+
+    def search(params):
+        calls.append(params.top_k)
+        return SearchResult(hits=products("a"), diagnostics={"exhausted": True})
+
+    response = build_search(demo_services(search=search))(request("сервер"))
+    assert response.status == "partial"
+    assert response.retry_count == 0
+    assert calls == [12]
+
+
+def test_exhausted_category_hint_can_widen_once_with_original_constraints():
+    calls = []
+    filters = HardFilters(in_stock=True, max_total_price_kopecks=300_000)
+
+    def understand(item):
+        return QuerySpec(
+            raw_query=item.query,
+            normalized_query="сервер",
+            hard_filters=filters,
+            category_hints=["backup", "virtualization"],
+        )
+
+    def search(params):
+        calls.append(params)
+        scoped = bool(params.query_spec.category_hints)
+        return SearchResult(
+            hits=products("a") if scoped else products("a", "b", "c", "d"),
+            diagnostics={"exhausted": True, "category_hints_applied": scoped},
+        )
+
+    def validate(spec, results, recommendations, evidence):
+        return ValidationResult(products=[hit.product for hit in results.hits])
+
+    runner = build_search(demo_services(understand=understand, search=search, validate=validate))
+    response = runner(request("сервер для резервного копирования"))
+    assert response.retry_count == 1 and response.status == "ok"
+    assert calls[0].query_spec.category_hints and not calls[1].query_spec.category_hints
+    assert all(call.query_spec.hard_filters == filters for call in calls)
+    assert "route:category_hint" in response.steps and "route:category_fallback" in response.steps
+
+
 def test_clarification_skips_search():
     def unexpected(_):
         pytest.fail("Clarification must be returned before search")
