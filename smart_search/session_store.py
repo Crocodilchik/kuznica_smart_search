@@ -23,7 +23,7 @@ DEFAULT_CONTEXT_WINDOW_ITEMS = 1
 DEFAULT_CONTEXT_MAX_CHARS = 500
 
 _FOLLOWUP_START_RE = re.compile(
-    r"^(?:а|и|но|тогда|теперь|давай(?:те)?|лучше|желательно|можно|ещ[её]|до|от|не\s+дороже|не\s+дешевле|бюджет\w*|подешевле|дешевле|подороже|дороже|под|для|на|с|без|в\s+наличии)\b",
+    r"^(?:а|и|но|тогда|теперь|давай(?:те)?|лучше|желательно|можно|ещ[её]|или|либо|только|до|от|не\s+дороже|не\s+дешевле|в\s+пределах|бюджет\w*|подешевле|дешевле|подороже|дороже|под|для|на|с|без|в\s+наличии)\b|^нет(?=\s*(?:,|давай|лучше|покаж|нуж))",
     re.IGNORECASE,
 )
 _FOLLOWUP_ANAPHORA_RE = re.compile(
@@ -32,6 +32,10 @@ _FOLLOWUP_ANAPHORA_RE = re.compile(
 )
 _FOLLOWUP_SINGLE_ADJ_RE = re.compile(
     r"^(?:беспроводн\w+|проводн\w+|игров\w+|офисн\w+|красн\w+|ч[её]рн\w+|бел\w+|сер\w+|российск\w+|отечественн\w+|платинов\w+|золот\w+|бронзов\w+|титанов\w+|rgb|\d+\s*(?:к|k|тыс\w*|руб\w*|₽)?)$",
+    re.IGNORECASE,
+)
+_FOLLOWUP_MEASURE_RE = re.compile(
+    r"^\d+(?:[.,]\d+)?\s*(?:дюйм\w*|\"|''|вт|w|ватт\w*|гб|тб|мб|гц|порт\w*|шт\.?|штук\w*|к|k|тыс\w*|млн\.?|руб\w*|₽)(?:\s+(?:и\s+выше|и\s+больше|и\s+меньше|минимум|максимум|в\s+наличии))?$",
     re.IGNORECASE,
 )
 
@@ -47,7 +51,9 @@ def is_followup_query(query: str, last_turn: SessionTurn | None) -> bool:
         return False
     if _FOLLOWUP_START_RE.search(cleaned) or _FOLLOWUP_ANAPHORA_RE.search(cleaned):
         return True
-    return bool(_FOLLOWUP_SINGLE_ADJ_RE.fullmatch(cleaned))
+    return bool(
+        _FOLLOWUP_SINGLE_ADJ_RE.fullmatch(cleaned) or _FOLLOWUP_MEASURE_RE.fullmatch(cleaned)
+    )
 
 
 class SessionTurn(Contract):
