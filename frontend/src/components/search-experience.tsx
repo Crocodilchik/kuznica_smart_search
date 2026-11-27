@@ -215,10 +215,10 @@ function isSearchResponse(value: unknown): value is SearchResponse {
 function getSessionId(): string {
   const storageKey = "softline-smart-search-session";
   try {
-    const existing = window.sessionStorage.getItem(storageKey);
+    const existing = window.localStorage.getItem(storageKey);
     if (existing) return existing;
     const created = window.crypto.randomUUID();
-    window.sessionStorage.setItem(storageKey, created);
+    window.localStorage.setItem(storageKey, created);
     return created;
   } catch {
     return window.crypto.randomUUID();
