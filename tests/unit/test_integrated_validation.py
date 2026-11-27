@@ -211,3 +211,44 @@ def test_bundle_budget_includes_all_parts_offered_for_the_same_anchor():
     )
     assert [r.product.product_id for r in result.recommendations] == ["b"]
     assert "budget_exceeded" in result.reason_codes
+
+
+def test_keyboard_min_price_and_rgb_exclude_mice_and_cheap_items():
+    spec = QuerySpec(
+        raw_query="хочу клавиатуру от 10 тыс с ргб",
+        normalized_query="клавиатура RGB",
+        product_type_hint="клавиатура",
+        required_terms=["RGB"],
+        hard_filters=HardFilters(min_total_price_kopecks=1_000_000),
+    )
+    products = [
+        Product(
+            product_id="mouse-rgb",
+            title="Мышь игровая RGB",
+            category="Клавиатуры, мыши, комплекты",
+            price_kopecks=1_500_000,
+        ),
+        Product(
+            product_id="kb-cheap",
+            title="Клавиатура механическая RGB",
+            category="Клавиатуры, мыши, комплекты",
+            price_kopecks=800_000,
+        ),
+        Product(
+            product_id="kb-no-rgb",
+            title="Клавиатура проводная",
+            category="Клавиатуры, мыши, комплекты",
+            price_kopecks=1_200_000,
+        ),
+        Product(
+            product_id="kb-ok",
+            title="Клавиатура механическая с RGB подсветкой",
+            category="Клавиатуры, мыши, комплекты",
+            price_kopecks=1_250_000,
+        ),
+    ]
+    result = check(products, spec=spec)
+    assert [item.product_id for item in result.products] == ["kb-ok"]
+    assert {"product_type_mismatch", "price_below_minimum", "rgb_unconfirmed"} <= set(
+        result.reason_codes
+    )
