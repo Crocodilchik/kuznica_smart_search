@@ -36,6 +36,17 @@ services:
       timeout: 3s
       retries: 12
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - ${SMART_SEARCH_REDIS_DATA_DIR:-./data/raw/redis-data}:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api:
     <<: *app-image
     init: true
@@ -48,9 +59,13 @@ services:
       SMART_SEARCH_BACKEND_MODULE: smart_search.backend
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-15}
+      REDIS_URL: ${SMART_SEARCH_REDIS_URL:-redis://redis:6379/0}
+      REDIS_SESSION_TTL_SECONDS: ${REDIS_SESSION_TTL_SECONDS:-86400}
       SMART_SEARCH_EVENT_DB: /var/lib/smart-search/events.sqlite3
     depends_on:
       qdrant:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     ports:
       - "127.0.0.1:${SMART_SEARCH_API_PORT:-8000}:8000"
