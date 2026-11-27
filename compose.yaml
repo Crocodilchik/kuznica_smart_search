@@ -50,6 +50,10 @@ services:
   api:
     <<: *app-image
     init: true
+    # Bypass host/WSL NAT DNS proxy (172.19.x.1) which fails when a desktop VPN is active.
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     env_file:
       - path: .env
         required: false
