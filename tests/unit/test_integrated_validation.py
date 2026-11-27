@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from smart_search import catalog_backend
 from smart_search.contracts import (
     Evidence,
     EvidenceResult,
@@ -11,9 +12,16 @@ from smart_search.contracts import (
     RecommendationDraft,
     RecommendationResult,
     SearchHit,
+    SearchParams,
     SearchResult,
 )
-from smart_search.validation import validate
+from smart_search.llm.exceptions import LLMUnavailableError
+from smart_search.validation import RerankedSelection, validate
+
+
+@pytest.fixture(autouse=True)
+def offline(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
 
 
 def product(product_id, **values):
@@ -252,3 +260,169 @@ def test_keyboard_min_price_and_rgb_exclude_mice_and_cheap_items():
     assert {"product_type_mismatch", "price_below_minimum", "rgb_unconfirmed"} <= set(
         result.reason_codes
     )
+
+
+def test_laptop_rule_rejects_tables_stands_mice_and_ram_for_laptops():
+    spec = QuerySpec(
+        raw_query="ноутбук до 100 тыс",
+        normalized_query="ноутбук",
+        product_type_hint="ноутбук",
+        hard_filters=HardFilters(max_total_price_kopecks=10_000_000),
+    )
+    items = [
+        Product(
+            product_id="table",
+            title="Стол для ноутбука Buro BU-807",
+            category="Подставки для ноутбуков",
+            price_kopecks=169_400,
+        ),
+        Product(
+            product_id="stand",
+            title="Подставка для ноутбука Deepcool",
+            category="Подставки для ноутбуков",
+            price_kopecks=289_400,
+        ),
+        Product(
+            product_id="mouse",
+            title="Мышь Оклик 980GMW для ноутбука",
+            category="Клавиатуры, мыши, комплекты",
+            price_kopecks=209_200,
+        ),
+        Product(
+            product_id="ram",
+            title="Оперативная память Crucial Laptop DDR5",
+            category="Оперативная память",
+            price_kopecks=1_700_000,
+        ),
+        Product(
+            product_id="numpad",
+            title="Числовой блок Оклик K604W для ноутбука",
+            category="Клавиатуры, мыши, комплекты",
+            price_kopecks=140_600,
+        ),
+        Product(
+            product_id="real-laptop",
+            title="Ноутбук LENOVO IdeaPad Slim 3",
+            category="Ноутбуки",
+            price_kopecks=5_938_900,
+        ),
+    ]
+    result = check(items, spec=spec)
+    assert [item.product_id for item in result.products] == ["real-laptop"]
+    assert "product_type_mismatch" in result.reason_codes
+
+
+def test_llm_rerank_filters_mismatches_and_reorders_candidates(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    captured = {}
+
+    def fake_complete_json(system_prompt, user_prompt, response_model):
+        captured["prompt"] = user_prompt
+        return RerankedSelection(relevant_ids=["l2", "l1", "nonexistent"])
+
+    monkeypatch.setattr("smart_search.validation.complete_json", fake_complete_json)
+
+    spec = QuerySpec(raw_query="ноутбук до 100 тыс", normalized_query="ноутбук")
+    items = [
+        Product(product_id="mini-pc", title="ПК INFERIT Micro", category="МиниПК"),
+        Product(product_id="l1", title="Ноутбук Acer Aspire 3", category="Ноутбуки"),
+        Product(product_id="l2", title="Ноутбук LENOVO IdeaPad Slim 3", category="Ноутбуки"),
+    ]
+    result = check(items, spec=spec)
+    assert [item.product_id for item in result.products] == ["l2", "l1"]
+    assert "llm_relevance_mismatch" in result.reason_codes
+    assert not result.warnings
+    assert "mini-pc" in captured["prompt"] and "Ноутбуки" in captured["prompt"]
+
+
+def test_llm_mode_skips_brittle_text_regex_and_passes_specs_to_deepseek(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    captured = {}
+
+    def fake_complete_json(system_prompt, user_prompt, response_model):
+        captured["prompt"] = user_prompt
+        return RerankedSelection(relevant_ids=["mon27", "psu-plat"])
+
+    monkeypatch.setattr("smart_search.validation.complete_json", fake_complete_json)
+
+    # Literal regex would have rejected "27.0-inch" for required_terms=["27 дюймов"]
+    # and rejected Gooxi PSU without "Platinum" in title.
+    spec = QuerySpec(
+        raw_query="монитор 27 дюймов",
+        normalized_query="монитор 27 дюймов",
+        product_type_hint="монитор",
+        required_terms=["27 дюймов"],
+    )
+    items = [
+        Product(
+            product_id="mon27",
+            title="Монитор ACER V277Gbi 27.0-inch черный",
+            category="Мониторы",
+            description='27" LCD TFT LED, 1920 x 1080',
+        ),
+        Product(
+            product_id="psu-plat",
+            title="Блок питания Gooxi GC2000PMT",
+            category="Блоки питания",
+            attributes={"Сертификаты": ["80 PLUS Platinum"]},
+        ),
+    ]
+    result = check(items, spec=spec)
+    assert [item.product_id for item in result.products] == ["mon27", "psu-plat"]
+    assert "80 PLUS Platinum" in captured["prompt"]
+    assert '27\\" LCD TFT LED' in captured["prompt"]
+
+
+def test_llm_rerank_fallback_preserves_deterministic_candidates_on_error(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+
+    def broken(*_args, **_kwargs):
+        raise LLMUnavailableError("timeout")
+
+    monkeypatch.setattr("smart_search.validation.complete_json", broken)
+    spec = QuerySpec(
+        raw_query="принтер",
+        normalized_query="принтер",
+        required_terms=["лазерный"],
+    )
+    items = [
+        Product(product_id="bad", title="Кабель USB", category="Кабели"),
+        *[
+            Product(product_id=f"p{i}", title=f"Принтер лазерный {i}", category="Принтеры")
+            for i in range(15)
+        ],
+    ]
+    result = check(items, spec=spec)
+    assert len(result.products) == 12
+    assert all(p.product_id != "bad" for p in result.products)
+    assert "validation_rerank_fallback" in result.warnings
+    assert "feature_unconfirmed" in result.reason_codes
+
+
+def test_catalog_backend_expands_pool_for_product_search_only(monkeypatch):
+    from types import SimpleNamespace
+
+    seen_top_k = []
+
+    def fake_rich(payload):
+        seen_top_k.append((payload["mode"], payload["top_k"]))
+        return SimpleNamespace(hits=[], warnings=[], status="empty", diagnostics={})
+
+    monkeypatch.setattr(catalog_backend, "search_rich", fake_rich)
+    catalog_backend.search(
+        SearchParams(
+            query_spec=QuerySpec(raw_query="ноутбук", normalized_query="ноутбук"),
+            mode="dense",
+            top_k=12,
+        )
+    )
+    catalog_backend.search(
+        SearchParams(
+            query_spec=QuerySpec(
+                raw_query="12345", normalized_query="12345", intent="exact_product", sku="12345"
+            ),
+            mode="sku",
+            top_k=12,
+        )
+    )
+    assert seen_top_k == [("dense", 100), ("sku", 12)]

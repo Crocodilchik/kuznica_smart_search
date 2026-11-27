@@ -1,8 +1,13 @@
 """Deterministic checks on catalog offers and the research attached to each claim."""
 
+import json
+import logging
+import os
 import re
 from collections import defaultdict
 from urllib.parse import urlsplit
+
+from pydantic import BaseModel, Field, ValidationError
 
 from smart_search.catalog_backend import resolve_category
 from smart_search.contracts import (
@@ -16,11 +21,57 @@ from smart_search.contracts import (
     SearchResult,
     ValidationResult,
 )
+from smart_search.llm.exceptions import LLMError
+from smart_search.model_client import complete_json
 from smart_search.understanding import KEYBOARD, MOUSE, RGB
 from softline_search.licensing import units_to_buy
 from softline_search.text import canonical_os, sku_key
 
+LOGGER = logging.getLogger(__name__)
 RELATIONS = {"alternatives": "substitute", "complements": "cross_sell"}
+MAX_RERANK_CANDIDATES = 100
+MAX_RERANK_RESULTS = 12
+_SKIP_ATTR_KEYS = frozenset(
+    {
+        "description_fields",
+        "price_status",
+        "price_source",
+        "license_units_source",
+        "Тип продукта",
+        "Тип поставки",
+        "Товар для геймеров",
+    }
+)
+_PRIORITY_ATTR_KEYS = (
+    "Сертификаты",
+    "Особенности",
+    "Подсветка",
+    "Подсветка клавиш",
+    "Диагональ",
+    "Диагональ экрана",
+    "Разрешение экрана",
+)
+
+
+class RerankedSelection(BaseModel):
+    """Structured selection returned by the relevance reranker."""
+
+    relevant_ids: list[str] = Field(default_factory=list)
+
+
+_RERANK_PROMPT = """Ты — финальный смысловой проверяющий поисковой выдачи ИТ-магазина Store.softline.ru.
+Пользователь ввёл запрос (`query`, `normalized_query`, и опционально `product_type_hint` и `required_terms`).
+Тебе дан список кандидатов (`id`, `t` — название, `c` — категория, `s` — краткие характеристики/описание), которые уже прошли числовые фильтры цены, ОС, наличия и лицензий.
+
+Задача:
+1. Отбери ТОЛЬКО те `id`, которые по смыслу являются именно искомым товаром и удовлетворяют явным требованиям запроса.
+2. Отсортируй их от наиболее подходящих к менее подходящим (не более 12 штук).
+3. Смысловые требования и синонимы проверяй по `t`, `c` И `s`: например, «27 дюймов» соответствует `27"` или `27.0-inch`, «платиновый» — `80 PLUS Platinum`, «RGB» — `RGB` / `подсветка` / `Lightsync` / `Chroma`, если свойство не отрицается явно («без подсветки»).
+4. Мягкие формулировки сценария («для работы с текстом», «для офиса», «для учёбы», «для дома», «надёжный») НЕ требуют дословного упоминания в описании карточки: оставляй стандартные подходящие модели этого типа товара и ставь выше те, чьи параметры (например, IPS/FullHD/большая диагональ для текста) лучше подходят под задачу.
+5. Если ищут сам прибор или устройство (ноутбук, монитор, сервер, ИБП, мышь, клавиатура, принтер, роутер, БП и т.д.), СТРОГО ИСКЛЮЧИ аксессуары, запчасти, расходники и смежные товары «для него» (столы, подставки, сумки, чехлы, рюкзаки, кабели, переходники, док-станции, кронштейны, сменные батареи, картриджи, ОЗУ/SSD для ноутбука и т.п.), если пользователь сам не просил аксессуар или комплект.
+6. Исключай товары другого класса (например мини-ПК или моноблок при поиске ноутбука, рабочую станцию при поиске сервера).
+7. Используй только `id` из входного списка `candidates`. Если подходящих товаров нет совсем — верни `{"relevant_ids": []}`.
+"""
 
 # Mapping of canonical product_type_hint -> (positive regex, conflicting regex unless kit requested)
 PRODUCT_TYPE_RULES: dict[str, tuple[re.Pattern[str], re.Pattern[str]]] = {
@@ -43,7 +94,7 @@ PRODUCT_TYPE_RULES: dict[str, tuple[re.Pattern[str], re.Pattern[str]]] = {
     "ноутбук": (
         re.compile(r"\b(?:ноутбук\w*|laptop|ultrabook|ультрабук\w*)\b", re.IGNORECASE),
         re.compile(
-            r"\b(?:сумк\w*|рюкзак\w*|чех[ое]л\w*|зарядн\w*|блок\s+питания|аккумулятор\w*)\b",
+            r"\b(?:сумк\w*|рюкзак\w*|чех[ое]л\w*|зарядн\w*|блок\s+питания|аккумулятор\w*|стол(?:ик)?\w*|подставк\w*|док-?станц\w*|мыш[ьиеа]\w*|клавиатур\w*|числов\w+\s+блок\w*|оперативн\w+\s+памят\w*)\b|(?:для|под|к)\s+ноутбук\w*",
             re.IGNORECASE,
         ),
     ),
@@ -91,21 +142,33 @@ def _matches_required_term(product: Product, term: str) -> bool:
     return any(positive.search(value) and not negated.search(value) for value in sources)
 
 
-def _identity(product: Product, spec: QuerySpec, category_ids: set[str]) -> str | None:
-    if spec.sku and sku_key(spec.sku) != sku_key(product.sku):
-        return "sku_mismatch"
-    if spec.category:
-        ids = {product.category_id, product.family_id, *product.category_ids}
-        names = {name.casefold() for name in [product.category, *product.category_path]}
-        if not category_ids.intersection(ids) and spec.category.casefold() not in names:
-            return "category_mismatch"
-        if spec.category == "server_hardware" and (
-            product.product_type == "software"
-            or re.search(r"рабочая станция", product.title, re.IGNORECASE)
-        ):
-            return "product_type_mismatch"
+def _compact_specs(product: Product, *, max_chars: int = 160) -> str:
+    parts: list[str] = []
+    seen_keys: set[str] = set()
 
-    # Generalized product type verification (prevents mice appearing for keyboards, cables for monitors, etc.)
+    def add_attr(key: str, raw: object) -> None:
+        if isinstance(raw, list):
+            val = ", ".join(str(v) for v in raw if v)
+        else:
+            val = str(raw or "").strip()
+        if val:
+            parts.append(f"{key}: {val}")
+
+    for key in _PRIORITY_ATTR_KEYS:
+        if key in product.attributes:
+            seen_keys.add(key)
+            add_attr(key, product.attributes[key])
+    if product.description.strip():
+        parts.append(" ".join(product.description.split()))
+    for key, raw in product.attributes.items():
+        if key in seen_keys or key in _SKIP_ATTR_KEYS:
+            continue
+        add_attr(key, raw)
+    return "; ".join(parts)[:max_chars]
+
+
+def _text_rules_failure(product: Product, spec: QuerySpec) -> str | None:
+    """Fallback regex validation for product types and literal feature terms when LLM is absent."""
     type_hint = (spec.product_type_hint or "").strip().casefold()
     if not type_hint and spec.intent == "product_search":
         if MOUSE.search(spec.normalized_query):
@@ -127,7 +190,6 @@ def _identity(product: Product, spec: QuerySpec, category_ids: set[str]) -> str 
             if not wants_bundle and neg_re.search(product.title):
                 return "product_type_mismatch"
 
-    # Required feature terms (e.g., RGB, plus backward-compatible MOUSE+RGB check)
     required = list(spec.required_terms)
     if (
         spec.intent == "product_search"
@@ -139,6 +201,33 @@ def _identity(product: Product, spec: QuerySpec, category_ids: set[str]) -> str 
     for term in required:
         if not _matches_required_term(product, term):
             return "rgb_unconfirmed" if term.casefold() == "rgb" else "feature_unconfirmed"
+    return None
+
+
+def _identity(
+    product: Product,
+    spec: QuerySpec,
+    category_ids: set[str],
+    *,
+    apply_text_rules: bool = True,
+) -> str | None:
+    if spec.sku and sku_key(spec.sku) != sku_key(product.sku):
+        return "sku_mismatch"
+    if spec.category:
+        ids = {product.category_id, product.family_id, *product.category_ids}
+        names = {name.casefold() for name in [product.category, *product.category_path]}
+        if not category_ids.intersection(ids) and spec.category.casefold() not in names:
+            return "category_mismatch"
+        if spec.category == "server_hardware" and (
+            product.product_type == "software"
+            or re.search(r"рабочая станция", product.title, re.IGNORECASE)
+        ):
+            return "product_type_mismatch"
+
+    if apply_text_rules:
+        text_failure = _text_rules_failure(product, spec)
+        if text_failure:
+            return text_failure
 
     # Restrict dotted product versions only when attached to a name, not prices or SKU parts.
     versions = re.findall(
@@ -165,6 +254,56 @@ def _traceable(item: Evidence) -> bool:
         return False
 
 
+def _llm_rerank_active(spec: QuerySpec) -> bool:
+    return (
+        spec.intent in {"product_search", "solution"}
+        and not spec.sku
+        and os.getenv("LLM_PROVIDER", "deepseek").strip().lower() != "mock"
+    )
+
+
+def _rerank_with_llm(
+    spec: QuerySpec, candidates: list[Product]
+) -> tuple[list[Product] | None, bool]:
+    """Filter out semantic mismatches/accessories and order top relevant hits via DeepSeek."""
+    if not candidates:
+        return None, False
+    by_id = {item.product_id: item for item in candidates}
+    payload = json.dumps(
+        {
+            "query": spec.raw_query,
+            "normalized_query": spec.normalized_query,
+            "product_type_hint": spec.product_type_hint,
+            "required_terms": spec.required_terms,
+            "candidates": [
+                {
+                    "id": item.product_id,
+                    "t": item.title[:140],
+                    "c": item.category,
+                    "s": _compact_specs(item),
+                }
+                for item in candidates[:MAX_RERANK_CANDIDATES]
+            ],
+        },
+        ensure_ascii=False,
+    )
+    try:
+        response = complete_json(_RERANK_PROMPT, payload, RerankedSelection)
+    except (LLMError, TimeoutError, ConnectionError, ValidationError, ValueError) as exc:
+        LOGGER.warning("Validation LLM rerank failed (%s)", type(exc).__name__)
+        return None, True
+
+    selected: list[Product] = []
+    seen: set[str] = set()
+    for pid in response.relevant_ids:
+        if pid in by_id and pid not in seen:
+            seen.add(pid)
+            selected.append(by_id[pid])
+            if len(selected) >= MAX_RERANK_RESULTS:
+                break
+    return selected, False
+
+
 def validate(
     spec: QuerySpec,
     result: SearchResult,
@@ -173,11 +312,13 @@ def validate(
 ) -> ValidationResult:
     category_ids = set(resolve_category(spec.category) or []) if spec.category else set()
     relation = RELATIONS.get(spec.intent)
+    use_llm_rerank = _llm_rerank_active(spec)
     products, anchors, costs = {}, {}, {}
     reasons = []
+    warnings = []
     for hit in result.hits:
         product = hit.product
-        failure = _identity(product, spec, category_ids)
+        failure = _identity(product, spec, category_ids, apply_text_rules=not use_llm_rerank)
         if not failure:
             if relation:
                 # A reference product can cost more than the requested substitute.
@@ -189,6 +330,27 @@ def validate(
                 costs[product.product_id] = cost
         if failure:
             reasons.append(failure)
+
+    if products and use_llm_rerank:
+        reranked, fallback_used = _rerank_with_llm(spec, list(products.values()))
+        if fallback_used:
+            warnings.append("validation_rerank_fallback")
+            filtered: dict[str, Product] = {}
+            for pid, item in products.items():
+                text_failure = _text_rules_failure(item, spec)
+                if text_failure:
+                    reasons.append(text_failure)
+                    continue
+                filtered[pid] = item
+                if len(filtered) >= MAX_RERANK_RESULTS:
+                    break
+            products = filtered
+            anchors = dict(products)
+        elif reranked is not None:
+            if len(reranked) < len(products):
+                reasons.append("llm_relevance_mismatch")
+            products = {item.product_id: item for item in reranked}
+            anchors = dict(products)
 
     proofs = defaultdict(list)
     for item in evidence:
@@ -244,6 +406,7 @@ def validate(
     return ValidationResult(
         products=list(products.values()),
         recommendations=list(accepted.values()),
+        warnings=list(dict.fromkeys(warnings)),
         reason_codes=list(dict.fromkeys(reasons)),
         needs_retry=result.available and spec.intent != "exact_product" and count < 4,
     )

@@ -152,7 +152,12 @@ def search_rich(params: CatalogParams | dict) -> CatalogResult:
 
 
 def search(params: SearchParams) -> SearchResult:
-    native = search_rich(params.model_dump(exclude={"query_spec": {"warnings"}}))
+    payload = params.model_dump(exclude={"query_spec": {"warnings"}})
+    if params.mode != "sku" and params.query_spec.intent in {"product_search", "solution"}:
+        # Fetch up to 100 candidates so downstream LLM reranking sees real target items
+        # even when accessories cluster near the top of raw vector/BM25 scores.
+        payload["top_k"] = max(int(payload.get("top_k", 12)), 100)
+    native = search_rich(payload)
     return SearchResult(
         hits=[SearchHit.model_validate(hit.model_dump()) for hit in native.hits],
         warnings=native.warnings,
