@@ -14,6 +14,7 @@ from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedR
 
 from .catalog import Catalog
 from .contracts import Product, QuerySpec, SearchHit, SearchParams, SearchResult
+from .licensing import units_to_buy
 from .retrieval import DenseEncoder, SparseBM25, rrf
 from .text import canonical_os, lexical_text
 
@@ -32,11 +33,20 @@ def payload_filter(spec: QuerySpec, category_ids: list[str] | None) -> qm.Filter
             must.append(qm.FieldCondition(key=name, match=qm.MatchValue(value=value)))
     if filters.max_total_price_kopecks is not None:
         must.append(
-            qm.FieldCondition(key="price_kopecks", range=qm.Range(gte=1, lte=filters.max_total_price_kopecks))
+            qm.FieldCondition(
+                key="price_kopecks", range=qm.Range(gte=1, lte=filters.max_total_price_kopecks)
+            )
         )
     if filters.devices is not None:
         must += [
-            qm.FieldCondition(key="license_units", range=qm.Range(gte=filters.devices)),
+            qm.Filter(
+                should=[
+                    qm.FieldCondition(key="license_units", range=qm.Range(gte=filters.devices)),
+                    qm.FieldCondition(
+                        key="product.attributes.license_stackable", match=qm.MatchValue(value=True)
+                    ),
+                ]
+            ),
             qm.FieldCondition(key="license_unit_type", match=qm.MatchValue(value="device")),
         ]
     return qm.Filter(must=must) if must else None
@@ -54,17 +64,13 @@ def matches_filters(product: Product, spec: QuerySpec, category_ids: list[str] |
         return False
     if filters.in_stock is not None and filters.in_stock != product.in_stock:
         return False
-    if filters.devices is not None and (
-        product.license_unit_type != "device"
-        or not product.license_units
-        or product.license_units < filters.devices
-    ):
+    units, failure = units_to_buy(product, filters.devices)
+    if failure:
         return False
     if filters.max_total_price_kopecks is not None:
         if product.price_kopecks is None:
             return False
-        # A known minimum purchase is mandatory even if the UI asks for one sale unit.
-        if product.price_kopecks * max(1, product.min_purchase or 1) > filters.max_total_price_kopecks:
+        if product.price_kopecks * units > filters.max_total_price_kopecks:
             return False
     return True
 
@@ -110,7 +116,9 @@ class SearchEngine:
         if self.index.get("catalog_content_sha256") != self.catalog.manifest.get("content_sha256"):
             raise ValueError("catalog_index_content_mismatch: rebuild after changing the parser")
         if self.index.get("remote", False) != bool(self.url):
-            raise ValueError("index_location_mismatch: supply the same Qdrant URL used for indexing")
+            raise ValueError(
+                "index_location_mismatch: supply the same Qdrant URL used for indexing"
+            )
         client = (
             QdrantClient(url=self.url, api_key=self.api_key, timeout=120)
             if self.url
@@ -138,7 +146,9 @@ class SearchEngine:
         if mode == "bm25":
             text = lexical_text(spec.normalized_query)
             query = (
-                qm.TextQuery(text=text) if self.index["backend"] == "fulltext" else self.sparse.query(text)
+                qm.TextQuery(text=text)
+                if self.index["backend"] == "fulltext"
+                else self.sparse.query(text)
             )
             using = "lexical_text" if self.index["backend"] == "fulltext" else "bm25"
         else:
@@ -184,13 +194,17 @@ class SearchEngine:
         categories = self.catalog.resolve_category(spec.category)
         if categories == []:
             diagnostics["latency_ms"] = round((time.perf_counter() - started) * 1000, 3)
-            return SearchResult(status="empty", warnings=["category_unresolved"], diagnostics=diagnostics)
+            return SearchResult(
+                status="empty", warnings=["category_unresolved"], diagnostics=diagnostics
+            )
         if (
             spec.hard_filters.country is not None
-            and self.catalog.manifest.get("statistics", {}).get("known_fields", {}).get("country") == 0
+            and self.catalog.manifest.get("statistics", {}).get("known_fields", {}).get("country")
+            == 0
         ):
             diagnostics.update(
-                backend="catalog_metadata", latency_ms=round((time.perf_counter() - started) * 1000, 3)
+                backend="catalog_metadata",
+                latency_ms=round((time.perf_counter() - started) * 1000, 3),
             )
             return SearchResult(
                 status="empty", warnings=["country_unknown_in_catalog"], diagnostics=diagnostics
@@ -223,7 +237,12 @@ class SearchEngine:
                         rankings.append(branch)
                         for product, score in branch:
                             branch_scores.setdefault(product.product_id, {})[mode] = score
-                    except (ValueError, OSError, UnexpectedResponse, ResponseHandlingException) as error:
+                    except (
+                        ValueError,
+                        OSError,
+                        UnexpectedResponse,
+                        ResponseHandlingException,
+                    ) as error:
                         warnings.append(f"{mode}_unavailable: {error}")
                 if not rankings:
                     status = "unavailable"

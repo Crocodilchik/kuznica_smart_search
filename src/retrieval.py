@@ -3,13 +3,13 @@
 import json
 import os
 from dataclasses import dataclass
-from tempfile import TemporaryDirectory
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Protocol
 
 import numpy as np
-from scipy import sparse
 from pydantic import BaseModel, Field
+from scipy import sparse
 
 from .catalog import open_catalog
 
@@ -71,21 +71,26 @@ class E5:
 
     def encode(self, texts, kind):
         vectors = self.model.encode(
-            [f"{kind}: {item}" for item in texts], normalize_embeddings=True,
+            [f"{kind}: {item}" for item in texts],
+            normalize_embeddings=True,
             show_progress_bar=False,
         )
         return vectors.astype(np.float32, copy=False)
 
 
 class CharacterEncoder:
-    metadata = {"model": "character-hash", "revision": "1"}
-
     def __init__(self):
         from sklearn.feature_extraction.text import HashingVectorizer
 
+        self.metadata = {"model": "character-hash", "revision": "1"}
         self.vectorizer = HashingVectorizer(
-            analyzer="char_wb", ngram_range=(3, 4), n_features=2**18,
-            alternate_sign=False, binary=True, norm="l2", dtype=np.float32,
+            analyzer="char_wb",
+            ngram_range=(3, 4),
+            n_features=2**18,
+            alternate_sign=False,
+            binary=True,
+            norm="l2",
+            dtype=np.float32,
         )
 
     def encode(self, texts, kind):
@@ -93,18 +98,30 @@ class CharacterEncoder:
 
 
 def representation(product):
-    attributes = "; ".join(f"{key}: {', '.join(values)}" for key, values in product["params"].items())
-    return " | ".join((
-        product["name"], product["vendor"], product["vendor_code"],
-        " > ".join(product["category_path"]), attributes, product["description"],
-    ))
+    attributes = "; ".join(
+        f"{key}: {', '.join(values)}" for key, values in product["params"].items()
+    )
+    return " | ".join(
+        (
+            product["name"],
+            product["vendor"],
+            product["vendor_code"],
+            " > ".join(product["category_path"]),
+            attributes,
+            product["description"],
+        )
+    )
 
 
 def compact_representation(product):
-    return " | ".join((
-        product["name"], product["vendor"], product["vendor_code"],
-        " > ".join(product["category_path"][-2:]),
-    ))
+    return " | ".join(
+        (
+            product["name"],
+            product["vendor"],
+            product["vendor_code"],
+            " > ".join(product["category_path"][-2:]),
+        )
+    )
 
 
 def build_index(db_path, index_path, encoder, batch_size=128, render=representation):
@@ -128,8 +145,15 @@ def build_index(db_path, index_path, encoder, batch_size=128, render=representat
         path = Path(temporary) / "index.npz"
         if sparse.issparse(vectors[0]):
             matrix = sparse.vstack(vectors, format="csr")
-            np.savez(path, ids=ids, data=matrix.data, indices=matrix.indices, indptr=matrix.indptr,
-                     shape=matrix.shape, metadata=json.dumps(metadata))
+            np.savez(
+                path,
+                ids=ids,
+                data=matrix.data,
+                indices=matrix.indices,
+                indptr=matrix.indptr,
+                shape=matrix.shape,
+                metadata=json.dumps(metadata),
+            )
         else:
             np.savez(path, ids=ids, vectors=np.concatenate(vectors), metadata=json.dumps(metadata))
         path.replace(index_path)
@@ -140,15 +164,23 @@ class CosineSearch:
     def __init__(self, db_path, index_path, encoder=None, rerank=None, max_candidates=100):
         with np.load(index_path, allow_pickle=False) as index:
             self.ids = index["ids"]
-            self.vectors = (index["vectors"] if "vectors" in index else sparse.csr_matrix(
-                (index["data"], index["indices"], index["indptr"]), shape=tuple(index["shape"]),
-            ))
+            self.vectors = (
+                index["vectors"]
+                if "vectors" in index
+                else sparse.csr_matrix(
+                    (index["data"], index["indices"], index["indptr"]),
+                    shape=tuple(index["shape"]),
+                )
+            )
             self.metadata = json.loads(index["metadata"].item())
         self.db_path = db_path
         self.encoder = encoder
         if self.encoder is None:
-            self.encoder = (CharacterEncoder() if self.metadata["model"] == "character-hash"
-                            else E5(self.metadata["model"], self.metadata["revision"]))
+            self.encoder = (
+                CharacterEncoder()
+                if self.metadata["model"] == "character-hash"
+                else E5(self.metadata["model"], self.metadata["revision"])
+            )
         if self.encoder.metadata != {key: self.metadata[key] for key in self.encoder.metadata}:
             raise ValueError("Encoder configuration does not match the index")
         self.rerank = rerank
@@ -158,26 +190,37 @@ class CosineSearch:
         from contextlib import closing
 
         query = self.encoder.encode([args.query], "query")[0]
-        scores = (self.vectors @ query.T).toarray().ravel() if sparse.issparse(query) else self.vectors @ query
+        scores = (
+            (self.vectors @ query.T).toarray().ravel()
+            if sparse.issparse(query)
+            else self.vectors @ query
+        )
         threshold = args.threshold
         if threshold is None and self.metadata["model"] == "character-hash":
             threshold = np.finfo(np.float32).eps
         limit = self.max_candidates if self.rerank else min(self.max_candidates, args.top_k)
         results = []
         with closing(open_catalog(self.db_path)) as db:
-            if db.execute("SELECT generation FROM metadata").fetchone()[0] != self.metadata["generation"]:
+            if (
+                db.execute("SELECT generation FROM metadata").fetchone()[0]
+                != self.metadata["generation"]
+            ):
                 raise ValueError("Catalog has changed. Rebuild the vector index.")
             for position in np.argsort(-scores, kind="stable"):
                 score = float(scores[position])
                 if threshold is not None and score < threshold:
                     break
-                row = db.execute("SELECT product FROM offers WHERE id = ?", (str(self.ids[position]),)).fetchone()
+                row = db.execute(
+                    "SELECT product FROM offers WHERE id = ?", (str(self.ids[position]),)
+                ).fetchone()
                 product = json.loads(row[0])
                 if args.filters.matches(product) and product["url"]:
                     candidate = Candidate(product, score, score)
                     if self.rerank:
-                        candidate.score = self.rerank(args.query, query, self.vectors[position], candidate)
+                        candidate.score = self.rerank(
+                            args.query, query, self.vectors[position], candidate
+                        )
                     results.append(candidate)
                     if len(results) == limit:
                         break
-        return sorted(results, key=lambda result: -result.score)[:args.top_k]
+        return sorted(results, key=lambda result: -result.score)[: args.top_k]

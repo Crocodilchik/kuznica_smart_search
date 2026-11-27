@@ -117,8 +117,7 @@ class BaseLLMProvider(ABC):
             return response_model.model_validate_json(response.content)
         except ValidationError as exc:
             logger.warning(
-                "llm_structured_validation_failed provider=%s model=%s "
-                "duration_ms=%.2f",
+                "llm_structured_validation_failed provider=%s model=%s duration_ms=%.2f",
                 self.provider,
                 self.model,
                 response.duration_ms,
@@ -134,9 +133,7 @@ class BaseLLMProvider(ABC):
     @property
     def _client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self._timeout_seconds)
-            )
+            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(self._timeout_seconds))
         return self._http_client
 
     async def _request(
@@ -199,4 +196,3 @@ class BaseLLMProvider(ABC):
         json_schema: dict[str, Any] | None,
     ) -> ProviderPayload:
         """Send one provider-specific request and normalize its response."""
-

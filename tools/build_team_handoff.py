@@ -57,7 +57,11 @@ def main() -> None:
         normalized_query="корпоративное антивирусное ПО",
         category="endpoint_security",
         hard_filters=HardFilters(
-            os="Windows", country="RU", devices=50, max_total_price_kopecks=10_000_000, budget_scope="primary"
+            os="Windows",
+            country="RU",
+            devices=50,
+            max_total_price_kopecks=10_000_000,
+            budget_scope="primary",
         ),
     )
     server_spec = QuerySpec(
@@ -82,7 +86,9 @@ def main() -> None:
         "dev2_query_spec_russian_strict.json": russian,
         "search_params_bm25.json": params,
         "search_params_sku.json": exact_params,
-        "search_params_russian_strict.json": SearchParams(query_spec=russian, mode="bm25", top_k=10),
+        "search_params_russian_strict.json": SearchParams(
+            query_spec=russian, mode="bm25", top_k=10
+        ),
         "search_params_complements_ups.json": complements,
     }
     for name, model in models.items():
@@ -116,12 +122,15 @@ def main() -> None:
         result = engine.search(params)
         assert result.status == "ok" and result.hits
         assert all(
-            matches_filters(hit.product, spec, catalog.resolve_category(spec.category)) for hit in result.hits
+            matches_filters(hit.product, spec, catalog.resolve_category(spec.category))
+            for hit in result.hits
         )
         export_model("examples/search_result_bm25.json", result)
         export_model("examples/search_result_sku.json", engine.search(exact_params))
         empty_result = engine.search(SearchParams(query_spec=russian))
-        assert empty_result.status == "empty" and "country_unknown_in_catalog" in empty_result.warnings
+        assert (
+            empty_result.status == "empty" and "country_unknown_in_catalog" in empty_result.warnings
+        )
         export_model("examples/search_result_country_unknown.json", empty_result)
     missing_index = OUTPUT / "_not_an_index"
     assert not (missing_index / "index.json").exists()
@@ -196,7 +205,9 @@ def main() -> None:
     for file in OUTPUT.rglob("*.json"):
         json.loads(file.read_text(encoding="utf-8"))
     count = 0
-    for line in (OUTPUT / "data/catalog/sample_products.jsonl").read_text(encoding="utf-8").splitlines():
+    for line in (
+        (OUTPUT / "data/catalog/sample_products.jsonl").read_text(encoding="utf-8").splitlines()
+    ):
         Product.model_validate_json(line)
         count += 1
     assert count == catalog.manifest["sample_products"]

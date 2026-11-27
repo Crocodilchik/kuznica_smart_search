@@ -48,7 +48,11 @@ def normalize(node, categories):
     for param in node.findall("param"):
         name = param.get("name", "").strip()
         content = (param.text or "").strip()
-        if name and content and content.casefold() not in {"другое или отсутствует", "не определено"}:
+        if (
+            name
+            and content
+            and content.casefold() not in {"другое или отсутствует", "не определено"}
+        ):
             params[name].append(content)
     return {
         "offer_id": node.attrib["id"],
@@ -82,7 +86,10 @@ def build_catalog(source, destination):
                 db.execute("CREATE TABLE offers (id TEXT PRIMARY KEY, product TEXT NOT NULL)")
                 db.executemany(
                     "INSERT INTO offers VALUES (?, ?)",
-                    ((offer["offer_id"], json.dumps(offer, ensure_ascii=False)) for offer in offers(source)),
+                    (
+                        (offer["offer_id"], json.dumps(offer, ensure_ascii=False))
+                        for offer in offers(source)
+                    ),
                 )
                 count = db.execute("SELECT count(*) FROM offers").fetchone()[0]
                 if not count:

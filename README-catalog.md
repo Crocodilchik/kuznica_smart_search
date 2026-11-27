@@ -44,9 +44,7 @@ SKU — около 1 мс. Это функциональная проверка 
 На другом ПК сначала создайте venv установленным Python 3.12+, затем установите окружение:
 
 ```powershell
-python -m venv .venv
-& '.\.venv\Scripts\python.exe' -m pip install -r requirements.lock.txt
-& '.\.venv\Scripts\python.exe' -m pip install -e . --no-deps --no-build-isolation
+uv sync --locked --python 3.12
 & '.\.venv\Scripts\python.exe' -X utf8 -m softline_search prepare 'data/raw/Mindbox.yml.gz.xml'
 & '.\.venv\Scripts\python.exe' -X utf8 -m softline_search index
 ```

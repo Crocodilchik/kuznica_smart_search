@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints, field_validator
 
 Intent = Literal["exact_product", "product_search", "alternatives", "complements", "solution"]
 SearchMode = Literal["sku", "bm25", "dense", "hybrid"]
@@ -38,6 +38,16 @@ class HardFilters(Contract):
     budget_scope: Literal["primary", "bundle"] | None = None
     in_stock: bool | None = None
 
+    @field_validator("country")
+    @classmethod
+    def country_code(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        code = value.strip().upper()
+        if len(code) != 2 or not code.isascii() or not code.isalpha():
+            raise ValueError("country must be a two-letter ISO code")
+        return code
+
 
 class Preferences(Contract):
     preferred_brand: str | None = None
@@ -59,32 +69,50 @@ class QuerySpec(Contract):
 class SearchParams(Contract):
     query_spec: QuerySpec
     mode: SearchMode = "hybrid"
-    top_k: PositiveInt = 12
+    top_k: PositiveInt = Field(default=12, le=1000)
 
 
 class Product(Contract):
     product_id: NonEmptyText
     sku: str | None = None
     title: NonEmptyText
-    category: NonEmptyText
+    category: str
     brand: str | None = None
     price_kopecks: Kopecks | None = None
     license_units: PositiveInt | None = None
     in_stock: bool | None = None
     url: str | None = None
-    attributes: dict[str, str | int | float | bool | list[str] | None] = Field(default_factory=dict)
+    attributes: dict[str, JsonValue] = Field(default_factory=dict)
+    category_id: str | None = None
+    category_ids: list[str] = Field(default_factory=list)
+    category_path: list[str] = Field(default_factory=list)
+    family_id: str | None = None
+    family_name: str | None = None
+    description: str = ""
+    search_text: str = ""
+    os: list[str] = Field(default_factory=list)
+    country: str | None = None
+    license_unit_type: Literal["device", "user", "license"] | None = None
+    min_purchase: PositiveInt | None = None
+    license_type: str | None = None
+    product_type: Literal["software", "hardware", "unknown"] = "unknown"
+    source_currency: str | None = None
+    source_date: str | None = None
+    data_warnings: list[str] = Field(default_factory=list)
 
 
 class SearchHit(Contract):
     product: Product
     rank: PositiveInt
     score: float | None = None
+    branch_scores: dict[str, float] = Field(default_factory=dict)
 
 
 class SearchResult(Contract):
     hits: list[SearchHit] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     available: bool = True
+    diagnostics: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class RecommendationDraft(Contract):

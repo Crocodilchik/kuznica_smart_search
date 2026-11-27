@@ -85,19 +85,19 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/v1/search" `
 
 ## GET /health/ready
 
-Возвращает `200` с `{"status":"ready","mode":"prod"}`, когда выбран `prod`, модуль импортируется и экспортирует все пять функций. При проблеме конфигурации возвращает `503` с телом ошибки. Проверка готовности проверяет подключение модуля, сам поиск выполняется через `POST /v1/search`.
+Возвращает `200` с `{"status":"ready","mode":"prod"}`, когда выбран `prod`, модуль импортируется, обязательные функции доступны и его проверка готовности завершилась успешно. Для встроенного `smart_search.backend` проверяются каталог SQLite, активный индекс Qdrant и соответствие снимка. Код `catalog_unavailable` с HTTP 503 означает, что для общего поиска данных сейчас недостаточно. SKU может продолжать работать при доступном SQLite. Код `invalid_retrieval_mode` означает, что в конфигурации поиска указано неподдерживаемое значение.
 
 ## Запуск и проверка
 
 ```powershell
 uv sync --locked
 $env:SMART_SEARCH_MODE = "prod"
-$env:SMART_SEARCH_BACKEND_MODULE = "backend"
+$env:SMART_SEARCH_BACKEND_MODULE = "smart_search.backend"
 $env:SMART_SEARCH_KAFKA_BOOTSTRAP_SERVERS = "127.0.0.1:19092"
 uv run --locked python -m uvicorn smart_search.interfaces.api:app --host 127.0.0.1 --port 8000
 ```
 
-`backend` — пример имени подключённого Python-модуля. OpenAPI доступен по `/openapi.json`, интерактивная документация — по `/docs`. Поисковую форму с тем же окружением запускает команда `uv run --locked python -m streamlit run smart_search/interfaces/web.py`.
+OpenAPI доступен по `/openapi.json`, интерактивная документация — по `/docs`. Поисковую форму запускает команда `uv run --locked python -m streamlit run smart_search/interfaces/web.py`. При совместном запуске задайте для формы `SMART_SEARCH_API_URL=http://127.0.0.1:8000`, чтобы запросы обрабатывал один процесс с локальным индексом.
 
 Вручную введённые тестовые запросы пишутся в `.local/events.sqlite3` или в файл `SMART_SEARCH_EVENT_DB`. В `prod` события направляются в брокер. Сбой доставки события журналируется, а поисковый ответ возвращается клиенту. [Контракт публикации](contract_events_interface.md)
 

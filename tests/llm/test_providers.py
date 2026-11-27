@@ -13,7 +13,6 @@ from smart_search.llm import (
     MockLLMProvider,
     OllamaProvider,
 )
-from smart_search.llm.exceptions import LLMError
 
 
 class ExtractedQuery(BaseModel):
@@ -137,7 +136,7 @@ async def test_mock_provider_validates_structured_response_without_network():
 
 @pytest.mark.asyncio
 async def test_invalid_json_or_schema_raises_unified_response_error():
-    for body in ('not json', '{"intent":"search","devices":"many"}'):
+    for body in ("not json", '{"intent":"search","devices":"many"}'):
         provider = MockLLMProvider(body)
         with pytest.raises(LLMResponseError):
             await provider.complete_json("system", "user", ExtractedQuery)

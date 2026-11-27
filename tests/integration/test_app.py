@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from pydantic import ValidationError
 from streamlit.testing.v1 import AppTest
@@ -78,3 +79,24 @@ def test_example_configuration_respects_search_request_length():
 
     with pytest.raises(ValidationError, match="examples.0"):
         ui_config.UIConfig.model_validate(config)
+
+
+def test_prod_form_can_share_the_running_api_process(prod_backend, monkeypatch):
+    monkeypatch.setenv("SMART_SEARCH_API_URL", "http://search.test:8000")
+    from fastapi.testclient import TestClient
+
+    from smart_search.interfaces.api import app as api
+
+    with TestClient(api) as client:
+
+        def post(url, *, json, timeout):
+            assert url == "http://search.test:8000/v1/search" and timeout > 0
+            return client.post("/v1/search", json=json)
+
+        monkeypatch.setattr(httpx, "post", post)
+        form = AppTest.from_file(WEB_ENTRY, default_timeout=15).run()
+        form.text_input(key="query").set_value("Монитор")
+        form.button(key="submit_search").click().run()
+    assert not form.exception
+    assert any("Монитор для переговорной" in item.value for item in form.markdown)
+    assert prod_backend.received == ["Монитор"]

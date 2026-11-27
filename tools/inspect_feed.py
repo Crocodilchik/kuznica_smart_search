@@ -41,7 +41,11 @@ def inspect(source: Path) -> dict:
                 offer_id = element.get("id", "")
                 counters["quality"]["duplicate_id"] += int(offer_id in ids)
                 ids.add(offer_id)
-                data = {child.tag: (child.text or "").strip() for child in element if child.tag != "param"}
+                data = {
+                    child.tag: (child.text or "").strip()
+                    for child in element
+                    if child.tag != "param"
+                }
                 for key, value in data.items():
                     counters["fields_present"][key] += 1
                     if not value:
@@ -102,7 +106,9 @@ def inspect(source: Path) -> dict:
         "parameter_values": {key: dict(value.most_common(15)) for key, value in values.items()},
         "positive_price_rub": price_summary,
         "samples": samples,
-        "root_categories": {key: value for key, value in categories.items() if not value["parent_id"]},
+        "root_categories": {
+            key: value for key, value in categories.items() if not value["parent_id"]
+        },
         "elapsed_seconds": round(time.perf_counter() - started, 3),
     }
 
@@ -117,7 +123,10 @@ if __name__ == "__main__":
     args.output.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
     print(
         json.dumps(
-            {key: profile[key] for key in ("offers", "categories", "positive_price_rub", "elapsed_seconds")},
+            {
+                key: profile[key]
+                for key in ("offers", "categories", "positive_price_rub", "elapsed_seconds")
+            },
             ensure_ascii=False,
         )
     )

@@ -12,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from smart_search.contracts import (
     EvidenceResult,
     HardFilters,
+    Product,
     QuerySpec,
     RecommendationResult,
     SearchEvent,
@@ -42,6 +43,7 @@ class AgentState(TypedDict, total=False):
     spec: QuerySpec
     search_result: SearchResult
     recommendation_result: RecommendationResult
+    anchors: list[Product]
     evidence: list[EvidenceResult]
     validation: ValidationResult
     retry_count: int
@@ -61,6 +63,7 @@ def _merge_search(previous: SearchResult, current: SearchResult) -> SearchResult
         hits=[hit.model_copy(update={"rank": rank}) for rank, hit in enumerate(hits.values(), 1)],
         warnings=list(dict.fromkeys([*previous.warnings, *current.warnings])),
         available=previous.available or current.available,
+        diagnostics=current.diagnostics,
     )
 
 
@@ -91,12 +94,13 @@ def _status(state: AgentState) -> SearchStatus:
     recommendation_warnings = {
         *state.get("warnings", []),
         *state.get("recommendation_result", RecommendationResult()).warnings,
+        *(warning for item in state.get("evidence", []) for warning in item.warnings),
     }
     if not count and recommendation_needed and RECOMMENDATION_FAILURES & recommendation_warnings:
         return "unavailable"
     if not count:
         return "empty"
-    if count < (1 if spec.sku else 4):
+    if count < (1 if spec.intent == "exact_product" and spec.sku else 4):
         return "partial"
     return "ok"
 
@@ -142,7 +146,7 @@ def build_search(
         ):
             current = current.model_copy(update={"available": False})
         previous = state.get("search_result")
-        merged = _merge_search(previous if previous is not None else current, current)
+        merged = _merge_search(previous, current) if previous is not None else current
         return {"search_result": merged, "steps": _step(state, f"search:{mode}")}
 
     def validate_primary(state: AgentState) -> AgentState:
@@ -164,22 +168,33 @@ def build_search(
         anchors = state["validation"].products
         if spec.intent in RELATION_BY_INTENT:
             anchors = [hit.product for hit in state["search_result"].hits[:1]]
-        if not anchors or spec.sku:
+        if not anchors or (spec.intent == "exact_product" and spec.sku):
             return {"recommendation_result": RecommendationResult()}
         try:
             result = services.recommend(spec, anchors[:3])
         except DEPENDENCY_FAILURES:
             result = RecommendationResult(warnings=["recommendation_unavailable"])
-        return {"recommendation_result": result, "steps": _step(state, "recommend")}
+        return {
+            "recommendation_result": result,
+            "anchors": anchors[:3],
+            "steps": _step(state, "recommend"),
+        }
 
     def research(state: AgentState) -> AgentState:
         evidence = []
         warnings = list(state.get("warnings", []))
-        for draft in state["recommendation_result"].recommendations[:8]:
+        drafts = state["recommendation_result"].recommendations[:8]
+        if services.research_batch is not None:
             try:
-                evidence.append(services.research(draft))
+                evidence = services.research_batch(state["spec"], state["anchors"], drafts)
             except DEPENDENCY_FAILURES:
                 warnings.append("research_unavailable")
+        else:
+            for draft in drafts:
+                try:
+                    evidence.append(services.research(draft))
+                except DEPENDENCY_FAILURES:
+                    warnings.append("research_unavailable")
         return {"evidence": evidence, "warnings": warnings, "steps": _step(state, "research")}
 
     def validate_recommendations(state: AgentState) -> AgentState:
@@ -215,7 +230,7 @@ def build_search(
 
     def after_validation(state: AgentState) -> str:
         spec, validation = state["spec"], state["validation"]
-        if spec.sku or state["retry_count"]:
+        if (spec.intent == "exact_product" and spec.sku) or state["retry_count"]:
             return "done"
         if _status(state) == "unavailable":
             return "done"

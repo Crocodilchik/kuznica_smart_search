@@ -10,4 +10,12 @@ from softline_search.contracts import (
     SearchResult,
 )
 
-__all__ = ["HardFilters", "Preferences", "Product", "QuerySpec", "SearchHit", "SearchParams", "SearchResult"]
+__all__ = [
+    "HardFilters",
+    "Preferences",
+    "Product",
+    "QuerySpec",
+    "SearchHit",
+    "SearchParams",
+    "SearchResult",
+]

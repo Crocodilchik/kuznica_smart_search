@@ -4,13 +4,11 @@
 
 ## Установка
 
-Требуется Python 3.11 или новее.
+В объединённом проекте команды выполняются из корня репозитория. Требуется Python 3.12+. Код провайдеров находится в [smart_search/llm](../smart_search/llm), общие настройки описаны в [корневом README](../README.md).
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
-Copy-Item .env.example .env
+uv sync --locked --python 3.12
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
 Отредактируйте `.env` локально. Не добавляйте его в Git и не вставляйте реальный API-ключ в команды, журналы или примеры.
@@ -29,7 +27,7 @@ DEEPSEEK_MODEL=deepseek-chat
 Проверьте, что ключ и выбранная модель доступны вашему аккаунту, затем выполните текстовую и структурированную smoke-проверку:
 
 ```powershell
-python scripts/check_llm.py
+uv run --locked python -m scripts.check_llm
 ```
 
 Клиент отправит запросы в DeepSeek API. Вызовы могут расходовать баланс аккаунта.
@@ -62,7 +60,7 @@ OLLAMA_MODEL=qwen3:8b
 Запустите ту же проверку:
 
 ```powershell
-python scripts/check_llm.py
+uv run --locked python -m scripts.check_llm
 ```
 
 Smoke-скрипт выполняет один текстовый и один структурированный запрос к выбранному провайдеру. Ollama должен быть запущен; модель должна быть загружена локально.
@@ -87,7 +85,7 @@ async def interpret(query: str, llm: LLMClient) -> QueryInterpretation:
     )
 ```
 
-Оркестратор создаёт один клиент через `LLMFactory.create()` при старте и закрывает его при остановке через `await client.aclose()`. В Query Understanding технические ошибки `LLMError` должны запускать детерминированный fallback и сохранять диагностику; Research также работает через `LLMClient`. Валидация модели и конфигурация не зависят от провайдера.
+Синхронная граница графа создаёт клиент через `LLMFactory.create()` для структурированного вызова и закрывает его в том же цикле событий. Query Understanding при ошибках модели возвращает результаты правил с предупреждением. Тем же клиентом пользуются планирование и пакетная проверка доказательств. [Код вызова](../smart_search/model_client.py)
 
 ## Конфигурация
 
@@ -100,14 +98,14 @@ async def interpret(query: str, llm: LLMClient) -> QueryInterpretation:
 | `DEEPSEEK_BASE_URL` | Базовый URL DeepSeek API | `https://api.deepseek.com` |
 | `DEEPSEEK_MODEL` | Имя модели DeepSeek | `deepseek-chat` |
 | `OLLAMA_BASE_URL` | Базовый URL сервера Ollama | `http://localhost:11434` |
-| `OLLAMA_MODEL` | Имя локальной модели Ollama | `qwen3:4b` |
+| `OLLAMA_MODEL` | Имя локальной модели Ollama | `qwen3:8b` |
 
 `MockLLMProvider` предназначен для тестов без сети. Ошибки моделей не преобразуются в пустые результаты и не переключают провайдера.
 
 ## Unit-тесты
 
 ```powershell
-python -m pytest
+uv run --locked python -m pytest tests/llm
 ```
 
 Тесты провайдеров используют HTTPX mock transport и не требуют API-ключа, запущенного Ollama или сетевого доступа.

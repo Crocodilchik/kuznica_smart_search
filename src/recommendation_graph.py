@@ -34,12 +34,19 @@ class RecommendationGraph(BaseModel):
 
 
 def product_fingerprint(product: Product) -> str:
-    fields = product.model_dump(mode="json", include={"sku", "title", "description", "attributes", "url", "source_date"})
-    return hashlib.sha256(json.dumps(fields, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    fields = product.model_dump(
+        mode="json", include={"sku", "title", "description", "attributes", "url", "source_date"}
+    )
+    return hashlib.sha256(
+        json.dumps(fields, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
 
 
 def check_graph_evidence(
-    db: sqlite3.Connection, drafts: list[RecommendationDraft], *, anchors: list[Product],
+    db: sqlite3.Connection,
+    drafts: list[RecommendationDraft],
+    *,
+    anchors: list[Product],
 ) -> list[EvidenceResult]:
     db.execute(
         """CREATE TABLE IF NOT EXISTS compatibility_edges (

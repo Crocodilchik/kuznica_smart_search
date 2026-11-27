@@ -28,3 +28,7 @@ class Services:
     validate: Callable[
         [QuerySpec, SearchResult, RecommendationResult, list[EvidenceResult]], ValidationResult
     ]
+    research_batch: (
+        Callable[[QuerySpec, list[Product], list[RecommendationDraft]], list[EvidenceResult]] | None
+    ) = None
+    check_ready: Callable[[], None] | None = None

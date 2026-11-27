@@ -34,7 +34,7 @@ async def configuration_error(_request: Request, error: RuntimeConfigurationErro
     responses={503: {"model": InterfaceError, "description": "Backend configuration unavailable"}},
 )
 def readiness() -> ReadyResponse:
-    get_search_runner(require_prod=True)
+    get_search_runner(require_prod=True, check_dependencies=True)
     return ReadyResponse()
 
 

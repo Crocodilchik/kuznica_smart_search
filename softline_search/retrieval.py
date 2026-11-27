@@ -99,12 +99,19 @@ class SparseBM25:
 
 def ensure_fulltext(client: QdrantClient, collection: str) -> None:
     client.create_payload_index(
-        collection, "lexical_text", qm.TextIndexParams(type=qm.TextIndexType.TEXT, scoring=True), wait=True
+        collection,
+        "lexical_text",
+        qm.TextIndexParams(type=qm.TextIndexType.TEXT, scoring=True),
+        wait=True,
     )
-    client.query_points(collection, query=qm.TextQuery(text="capabilityprobe"), using="lexical_text", limit=1)
+    client.query_points(
+        collection, query=qm.TextQuery(text="capabilityprobe"), using="lexical_text", limit=1
+    )
 
 
-def _new_collection_bulk_connection(client: QdrantClient, collection: str) -> sqlite3.Connection | None:
+def _new_collection_bulk_connection(
+    client: QdrantClient, collection: str
+) -> sqlite3.Connection | None:
     """Tune only a new, unpublished local collection; never change installed SDK code.
 
     Local persistence commits each point. WAL/NORMAL avoids one disk flush per point;
@@ -154,7 +161,9 @@ def build_index(
     try:
         client.create_collection(
             collection,
-            vectors_config={"dense": qm.VectorParams(size=encoder.dimension, distance=qm.Distance.COSINE)}
+            vectors_config={
+                "dense": qm.VectorParams(size=encoder.dimension, distance=qm.Distance.COSINE)
+            }
             if encoder
             else {},
             sparse_vectors_config={"bm25": qm.SparseVectorParams(modifier=qm.Modifier.IDF)},
@@ -168,7 +177,11 @@ def build_index(
             except (UnexpectedResponse, NotImplementedError, ValueError) as error:
                 if backend == "fulltext":
                     raise
-                if isinstance(error, UnexpectedResponse) and error.status_code not in {400, 404, 422}:
+                if isinstance(error, UnexpectedResponse) and error.status_code not in {
+                    400,
+                    404,
+                    422,
+                }:
                     raise
                 selected = "sparse"
                 warnings.append(f"fulltext_scoring_unavailable: {type(error).__name__}")
@@ -182,18 +195,35 @@ def build_index(
             sparse = SparseBM25(directory / "models", avg_len)
         # Local Qdrant evaluates payload filters itself; server deployments need these indexes.
         if url:
-            for name in ("sku_key", "category_ids", "os", "country", "product_type", "license_unit_type"):
-                client.create_payload_index(collection, name, qm.PayloadSchemaType.KEYWORD, wait=True)
+            for name in (
+                "sku_key",
+                "category_ids",
+                "os",
+                "country",
+                "product_type",
+                "license_unit_type",
+            ):
+                client.create_payload_index(
+                    collection, name, qm.PayloadSchemaType.KEYWORD, wait=True
+                )
             for name in ("price_kopecks", "license_units"):
-                client.create_payload_index(collection, name, qm.PayloadSchemaType.INTEGER, wait=True)
-            client.create_payload_index(collection, "in_stock", qm.PayloadSchemaType.BOOL, wait=True)
+                client.create_payload_index(
+                    collection, name, qm.PayloadSchemaType.INTEGER, wait=True
+                )
+            client.create_payload_index(
+                collection, "in_stock", qm.PayloadSchemaType.BOOL, wait=True
+            )
         batch = []
 
         def upload(products: list[Product]):
             payloads = [product_payload(product) for product in products]
-            sparse_vectors = sparse.documents([item["lexical_text"] for item in payloads]) if sparse else None
+            sparse_vectors = (
+                sparse.documents([item["lexical_text"] for item in payloads]) if sparse else None
+            )
             dense_vectors = (
-                encoder.documents([product.search_text for product in products]) if encoder else None
+                encoder.documents([product.search_text for product in products])
+                if encoder
+                else None
             )
             if dense_vectors is not None and len(dense_vectors) != len(products):
                 raise ValueError("Dense encoder returned a different number of vectors")
@@ -265,4 +295,6 @@ def rrf(rankings: list[list[tuple[Product, float]]], k: int = 60) -> list[tuple[
             seen.add(product.product_id)
             products[product.product_id] = product
             scores[product.product_id] += 1.0 / (k + rank)
-    return [(products[key], scores[key]) for key in sorted(scores, key=lambda key: (-scores[key], key))]
+    return [
+        (products[key], scores[key]) for key in sorted(scores, key=lambda key: (-scores[key], key))
+    ]

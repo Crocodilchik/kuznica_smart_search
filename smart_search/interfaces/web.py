@@ -2,9 +2,11 @@
 
 import re
 import sqlite3
+from os import getenv
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+import httpx
 import streamlit as st
 from pydantic import ValidationError
 
@@ -145,10 +147,21 @@ def _render_search(config: UIConfig, mode: AppMode) -> None:
             )
             try:
                 with st.spinner("Подбираем товары"):
-                    response = run_search(request)
+                    endpoint = getenv("SMART_SEARCH_API_URL", "").strip() if mode == "prod" else ""
+                    if endpoint:
+                        reply = httpx.post(
+                            f"{endpoint.rstrip('/')}/v1/search",
+                            json=request.model_dump(mode="json"),
+                            timeout=120,
+                        )
+                        if reply.status_code != 503:
+                            reply.raise_for_status()
+                        response = SearchResponse.model_validate(reply.json())
+                    else:
+                        response = run_search(request)
                 st.session_state.response = response
                 st.session_state.follow_up = query if response.clarifying_question else None
-            except (ImportError, ValueError):
+            except (ImportError, ValueError, httpx.HTTPError):
                 st.error("Поисковый сервис временно недоступен.")
     if response := st.session_state.get("response"):
         _render_results(response, config, show_trace=mode == "test")

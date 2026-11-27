@@ -97,13 +97,19 @@ def license_capacity(title: str) -> tuple[int | None, str | None]:
             continue
         noun = match[2].casefold()
         kind = (
-            "license" if noun.startswith("лиценз") else "user" if noun.startswith("пользовател") else "device"
+            "license"
+            if noun.startswith("лиценз")
+            else "user"
+            if noun.startswith("пользовател")
+            else "device"
         )
         matches.append((units, kind))
     return matches[0] if len(set(matches)) == 1 else (None, None)
 
 
-def normalize_offer(element: Element, categories: dict[str, dict], source_date: str | None) -> Product:
+def normalize_offer(
+    element: Element, categories: dict[str, dict], source_date: str | None
+) -> Product:
     fields = {
         child.tag.rsplit("}", 1)[-1]: clean_text("".join(child.itertext()))
         for child in element
@@ -159,7 +165,9 @@ def normalize_offer(element: Element, categories: dict[str, dict], source_date: 
         if country is None and re.fullmatch(r"[A-Za-z]{2}", country_values[0]):
             country = country_values[0].upper()
     capacity, unit_type = license_capacity(title)
-    minimum = re.fullmatch(r"от\s+(\d+)\s+шт\.?", desc_fields.get("Минимальная покупка", ""), re.IGNORECASE)
+    minimum = re.fullmatch(
+        r"от\s+(\d+)\s+шт\.?", desc_fields.get("Минимальная покупка", ""), re.IGNORECASE
+    )
     min_purchase = int(minimum[1]) if minimum and int(minimum[1]) > 0 else None
     product_kind = (params.get("Тип продукта") or [""])[0].casefold()
     product_type = {"софт": "software", "электроника": "hardware"}.get(product_kind, "unknown")
@@ -170,7 +178,13 @@ def normalize_offer(element: Element, categories: dict[str, dict], source_date: 
     attributes["price_source"] = "offer.price"
     if capacity:
         attributes["license_units_source"] = "offer.name"
-    search_parts = [title, fields.get("vendor", ""), " > ".join(names), family_name or "", description]
+    search_parts = [
+        title,
+        fields.get("vendor", ""),
+        " > ".join(names),
+        family_name or "",
+        description,
+    ]
     search_parts += [f"{key}: {', '.join(values)}" for key, values in params.items()]
     return Product(
         product_id=product_id,

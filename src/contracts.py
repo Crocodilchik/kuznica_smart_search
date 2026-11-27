@@ -38,9 +38,9 @@ class Preferences(Contract):
 class QuerySpec(Contract):
     raw_query: str
     normalized_query: str
-    intent: Literal["exact_product", "product_search", "alternatives", "complements", "solution"] = (
-        "product_search"
-    )
+    intent: Literal[
+        "exact_product", "product_search", "alternatives", "complements", "solution"
+    ] = "product_search"
     sku: str | None = None
     category: str | None = None
     hard_filters: HardFilters = Field(default_factory=HardFilters)

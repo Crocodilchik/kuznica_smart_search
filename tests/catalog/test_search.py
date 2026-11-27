@@ -8,7 +8,9 @@ from softline_search.search import SearchEngine
 
 def params(query="защита", **kwargs):
     return SearchParams(
-        query_spec=QuerySpec(raw_query=query, normalized_query=query, hard_filters=HardFilters(**kwargs)),
+        query_spec=QuerySpec(
+            raw_query=query, normalized_query=query, hard_filters=HardFilters(**kwargs)
+        ),
         top_k=4,
     )
 
@@ -24,7 +26,9 @@ def index(catalog, tmp_path):
 def test_native_bm25_filters_and_persistent_reopen(catalog, index):
     for _ in range(2):
         with SearchEngine(catalog.directory, index) as engine:
-            result = engine.search(params(os="windows", in_stock=True, max_total_price_kopecks=100000))
+            result = engine.search(
+                params(os="windows", in_stock=True, max_total_price_kopecks=100000)
+            )
             assert result.status == "ok"
             assert [hit.product.product_id for hit in result.hits] == ["1"]
             assert result.hits[0].score > 0
@@ -133,6 +137,22 @@ def test_country_and_device_capacity_are_not_guessed(catalog, index):
         assert {hit.product.product_id for hit in result.hits} <= {"1"}
         result = engine.search(params("антивирус", devices=1000))
         assert not result.hits and result.status == "empty"
+
+
+def test_retrieval_allows_explicit_license_stacking_with_the_total_budget(
+    catalog, tmp_path, monkeypatch
+):
+    offers = list(catalog.iter_products())
+    pack = next(product for product in offers if product.product_id == "1")
+    pack.attributes["license_stackable"] = True
+    monkeypatch.setattr(catalog, "iter_products", lambda limit=None: iter(offers[:limit]))
+    directory = tmp_path / "stackable"
+    build_index(catalog, directory)
+    with SearchEngine(catalog.directory, directory) as engine:
+        within = engine.search(params("Защита", devices=75, max_total_price_kopecks=199998))
+        assert "1" in {hit.product.product_id for hit in within.hits}
+        over = engine.search(params("Защита", devices=75, max_total_price_kopecks=199997))
+        assert "1" not in {hit.product.product_id for hit in over.hits}
 
 
 def test_empty_query_does_not_return_random_products(catalog, index):

@@ -43,6 +43,7 @@ def prod_backend(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, backend.__name__, backend)
     monkeypatch.setenv("SMART_SEARCH_MODE", "prod")
     monkeypatch.setenv("SMART_SEARCH_BACKEND_MODULE", backend.__name__)
+    monkeypatch.delenv("SMART_SEARCH_API_URL", raising=False)
     monkeypatch.setenv("SMART_SEARCH_EVENT_DB", str(tmp_path / "test-events.sqlite3"))
     monkeypatch.delenv("SMART_SEARCH_KAFKA_BOOTSTRAP_SERVERS", raising=False)
     yield backend

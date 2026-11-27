@@ -32,7 +32,9 @@ ALIAS_PATTERNS = {
 def build_aliases(categories: dict[str, dict]) -> dict[str, list[str]]:
     aliases = {
         alias: [
-            key for key, category in categories.items() if re.search(pattern, category["name"], re.IGNORECASE)
+            key
+            for key, category in categories.items()
+            if re.search(pattern, category["name"], re.IGNORECASE)
         ]
         for alias, pattern in ALIAS_PATTERNS.items()
     }
@@ -105,7 +107,10 @@ def build_catalog(source: Path, output: Path, reports: Path, sample_size: int = 
                 except (ValueError, sqlite3.IntegrityError) as error:
                     rejected += 1
                     rejected_file.write(
-                        json.dumps({"offer_id": element.get("id"), "reason": str(error)}, ensure_ascii=False)
+                        json.dumps(
+                            {"offer_id": element.get("id"), "reason": str(error)},
+                            ensure_ascii=False,
+                        )
                         + "\n"
                     )
                     continue
@@ -113,13 +118,22 @@ def build_catalog(source: Path, output: Path, reports: Path, sample_size: int = 
                 content_hash.update((payload + "\n").encode("utf-8"))
                 counts["availability"][str(product.in_stock)] += 1
                 counts["product_type"][product.product_type] += 1
-                counts["price_status"]["known" if product.price_kopecks is not None else "unknown"] += 1
+                counts["price_status"][
+                    "known" if product.price_kopecks is not None else "unknown"
+                ] += 1
                 counts["brand"][product.brand or "<unknown>"] += 1
                 counts["category_id"][product.category_id or "<unknown>"] += 1
                 counts["license_type"][product.license_type or "<unknown>"] += 1
                 for warning in product.data_warnings:
                     counts["data_warnings"][warning] += 1
-                for name in ("sku", "price_kopecks", "license_units", "country", "os", "min_purchase"):
+                for name in (
+                    "sku",
+                    "price_kopecks",
+                    "license_units",
+                    "country",
+                    "os",
+                    "min_purchase",
+                ):
                     counts["known_fields"][name] += int(bool(getattr(product, name)))
                 for name, value in product.attributes.items():
                     if isinstance(value, list):
@@ -235,8 +249,12 @@ class Catalog:
         self.db_path = self.directory / "catalog.sqlite"
         if not self.db_path.is_file():
             raise FileNotFoundError(f"Catalog is not built: {self.db_path}")
-        self.categories = json.loads((self.directory / "categories.json").read_text(encoding="utf-8"))
-        self.aliases = json.loads((self.directory / "category_aliases.json").read_text(encoding="utf-8"))
+        self.categories = json.loads(
+            (self.directory / "categories.json").read_text(encoding="utf-8")
+        )
+        self.aliases = json.loads(
+            (self.directory / "category_aliases.json").read_text(encoding="utf-8")
+        )
         self.manifest = json.loads((self.directory / "manifest.json").read_text(encoding="utf-8"))
 
     def connect(self):
@@ -245,7 +263,8 @@ class Catalog:
     def iter_products(self, limit: int | None = None) -> Iterator[Product]:
         with closing(self.connect()) as connection:
             cursor = connection.execute(
-                "SELECT payload FROM products ORDER BY rowid LIMIT ?", (-1 if limit is None else limit,)
+                "SELECT payload FROM products ORDER BY rowid LIMIT ?",
+                (-1 if limit is None else limit,),
             )
             for (payload,) in cursor:
                 yield Product.model_validate_json(payload)

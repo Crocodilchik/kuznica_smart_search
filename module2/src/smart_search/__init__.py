@@ -1,1 +1,0 @@
-"""Smart Search application packages."""

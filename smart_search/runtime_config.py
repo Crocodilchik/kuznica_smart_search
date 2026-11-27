@@ -1,7 +1,12 @@
 """Shared runtime mode for the UI, API and event storage."""
 
 from os import getenv
+from pathlib import Path
 from typing import Literal
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 AppMode = Literal["test", "prod"]
 

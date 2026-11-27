@@ -19,7 +19,13 @@ def main():
     cases = [
         ("exact_sku", "AL16-03SWS701-0100", "sku", None, {}),
         ("product_name", "Kaspersky Endpoint Security", "bm25", None, {}),
-        ("budget_stock", "антивирус", "bm25", None, {"in_stock": True, "max_total_price_kopecks": 10000000}),
+        (
+            "budget_stock",
+            "антивирус",
+            "bm25",
+            None,
+            {"in_stock": True, "max_total_price_kopecks": 10000000},
+        ),
         ("server_category", "сервер", "bm25", "server_hardware", {}),
         ("backup", "резервное копирование", "bm25", None, {}),
         (

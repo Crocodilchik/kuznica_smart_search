@@ -4,15 +4,24 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "confluent-kafka>=2.11,<3",
+    "defusedxml>=0.7,<1",
     "fastapi>=0.115,<1",
+    "httpx>=0.28,<1",
     "langgraph>=1.0,<2",
+    "numpy>=1.26",
     "pydantic>=2.11,<3",
+    "pydantic-settings>=2.2,<3",
+    "python-dotenv>=1,<2",
+    "py-rust-stemmers>=0.1.8,<0.2",
+    "qdrant-client[fastembed]>=1.20,<2",
+    "scikit-learn>=1.5",
+    "scipy>=1.13",
     "streamlit>=1.45,<2",
     "uvicorn>=0.34,<1",
 ]
 
 [dependency-groups]
-dev = ["httpx>=0.28,<1", "pytest>=8,<10", "ruff>=0.11,<1"]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.23,<2", "ruff>=0.11,<1"]
 
 [tool.uv]
 package = false
@@ -20,7 +29,10 @@ package = false
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+extend-exclude = ["handoff"]

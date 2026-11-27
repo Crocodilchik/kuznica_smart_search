@@ -29,7 +29,9 @@ def main(argv=None):
     index.add_argument("--limit", type=int)
     index.add_argument("--batch-size", type=int, default=256)
     index.add_argument("--dense-model", help="Optional FastEmbed dense model; downloads weights")
-    query = sub.add_parser("search", help="Search from the terminal, or pass a SearchParams JSON file")
+    query = sub.add_parser(
+        "search", help="Search from the terminal, or pass a SearchParams JSON file"
+    )
     query.add_argument("query", nargs="?", default="")
     query.add_argument("--params", type=Path)
     query.add_argument("--mode", choices=["sku", "bm25", "dense", "hybrid"], default="bm25")
@@ -98,9 +100,13 @@ def main(argv=None):
                 for hit in response.hits:
                     product = hit.product
                     price = (
-                        f"{product.price_kopecks / 100:.2f} RUB" if product.price_kopecks else "price unknown"
+                        f"{product.price_kopecks / 100:.2f} RUB"
+                        if product.price_kopecks
+                        else "price unknown"
                     )
-                    print(f"{hit.rank}. [{product.product_id}] {product.title} | {price} | sku={product.sku}")
+                    print(
+                        f"{hit.rank}. [{product.product_id}] {product.title} | {price} | sku={product.sku}"
+                    )
                 if response.warnings:
                     print("warnings:", "; ".join(response.warnings))
                 return 2 if response.status == "unavailable" else 0
