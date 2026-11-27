@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { CSSProperties, FormEvent, PointerEvent } from "react";
 import type { Evidence, Product, Recommendation, SearchResponse, SearchStatus } from "@/types/search";
 
 type UIConfig = {
@@ -283,6 +283,7 @@ function catalogDetail(value: unknown): string {
 function findProductImage(sku: Product["sku"]): string | undefined {
   const normalized = sku?.trim().toUpperCase();
   if (!normalized) return undefined;
+  if (normalized === "EEC-06087") return "/softline-store/eec-06087.webp";
   return storeProducts.find((product) => product.sku?.toUpperCase() === normalized)?.image;
 }
 
@@ -531,7 +532,12 @@ function getResponseText(response: SearchResponse): string {
   return "Нашёл варианты в каталоге. Посмотрите товары ниже и уточните требования, если нужен более точный подбор.";
 }
 
-function ChatProducts({ response }: { response: SearchResponse }) {
+type ChatProductActions = {
+  loading: boolean;
+  onRequestAlternative: (product: Product) => void;
+};
+
+function ChatProducts({ response, loading, onRequestAlternative }: { response: SearchResponse } & ChatProductActions) {
   const items = [
     ...response.recommendations.map((recommendation) => ({
       product: recommendation.product,
@@ -573,6 +579,15 @@ function ChatProducts({ response }: { response: SearchResponse }) {
                 </details>
               )}
               {link && <a className="productLink" href={link} target="_blank" rel="noopener noreferrer">Открыть товар</a>}
+              <button
+                className="agentProductAlternative"
+                type="button"
+                disabled={loading}
+                aria-label={"Подобрать альтернативу для " + product.title}
+                onClick={() => onRequestAlternative(product)}
+              >
+                Подобрать альтернативу
+              </button>
             </div>
           </article>
         );
@@ -581,14 +596,14 @@ function ChatProducts({ response }: { response: SearchResponse }) {
   );
 }
 
-function ChatMessageView({ message }: { message: ChatMessage }) {
+function ChatMessageView({ message, loading, onRequestAlternative }: { message: ChatMessage } & ChatProductActions) {
   return (
     <div className={"agentMessage agentMessage-" + message.role}>
       {message.role === "assistant" && <span className="agentAvatar" aria-hidden="true"><SparklesIcon /></span>}
       <div className="agentBubble">
         <p>{message.text}</p>
         {message.response && (message.response.status === "ok" || message.response.status === "partial") && (
-          <ChatProducts response={message.response} />
+          <ChatProducts response={message.response} loading={loading} onRequestAlternative={onRequestAlternative} />
         )}
       </div>
     </div>
@@ -612,6 +627,10 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
   const [cartCount, setCartCount] = useState(0);
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [agentOpen, setAgentOpen] = useState(false);
+  const [agentExpanded, setAgentExpanded] = useState(false);
+  const [agentSize, setAgentSize] = useState<{ width: number; height: number }>();
+  const agentResize = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const agentWindowRef = useRef<HTMLElement>(null);
   const [agentInput, setAgentInput] = useState("");
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentContext, setAgentContext] = useState<string | null>(null);
@@ -665,6 +684,35 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
   }, [agentMessages, agentLoading, agentOpen]);
 
   const agentDockRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!agentExpanded) return;
+
+    function restoreOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setAgentExpanded(false);
+    }
+
+    window.addEventListener("keydown", restoreOnEscape);
+    return () => window.removeEventListener("keydown", restoreOnEscape);
+  }, [agentExpanded]);
+
+  function startAgentResize(event: PointerEvent<HTMLSpanElement>) {
+    if (!event.isPrimary || event.button !== 0 || !agentWindowRef.current) return;
+
+    const { width, height } = agentWindowRef.current.getBoundingClientRect();
+    agentResize.current = { x: event.clientX, y: event.clientY, width, height };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function resizeAgent(event: PointerEvent<HTMLSpanElement>) {
+    const start = agentResize.current;
+    if (!start || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+
+    setAgentSize({
+      width: Math.max(300, start.width + event.clientX - start.x),
+      height: Math.max(320, start.height + start.y - event.clientY),
+    });
+  }
 
   useEffect(() => {
     const dock = agentDockRef.current;
@@ -740,11 +788,22 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
     }
   }
 
-  async function submitAgentMessage(event: FormEvent<HTMLFormElement>) {
+  function submitAgentMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const messageText = agentInput.trim();
     if (!messageText || agentLoading) return;
     setAgentInput("");
+    void sendAgentMessage(messageText);
+  }
+
+  function requestAlternative(product: Product) {
+    const article = product.sku?.trim();
+    const reference = article ? `артикул ${article} (${product.title})` : product.title;
+    void sendAgentMessage(`Подбери замену для товара: ${reference}`);
+  }
+
+  async function sendAgentMessage(messageText: string) {
+    if (agentLoading) return;
     setAgentOpen(true);
     setAgentMessages((messages) => [...messages, {
       id: window.crypto.randomUUID(),
@@ -1017,17 +1076,55 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
 
       <aside ref={agentDockRef} className="agentDock" aria-label="AI-агент по подбору товаров">
         {agentOpen && (
-          <section className="agentWindow" aria-labelledby="agent-title">
+          <section
+            ref={agentWindowRef}
+            className={agentExpanded ? "agentWindow agentWindowExpanded" : "agentWindow"}
+            style={agentSize && {
+              "--agent-width": agentSize.width + "px",
+              "--agent-height": agentSize.height + "px",
+            } as CSSProperties}
+            aria-labelledby="agent-title"
+          >
+            {!agentExpanded && (
+              <span
+                className="agentResizeHandle"
+                aria-hidden="true"
+                onPointerDown={startAgentResize}
+                onPointerMove={resizeAgent}
+                onLostPointerCapture={() => { agentResize.current = null; }}
+              />
+            )}
             <header className="agentHeader">
               <div className="agentHeaderAvatar" aria-hidden="true"><SparklesIcon /></div>
               <div className="agentHeaderText">
                 <strong id="agent-title">AI-помощник Softline</strong>
                 <span className={"service-" + readiness} title={readinessMessage}><i /> {readiness === "ready" ? "Подбор по каталогу" : readiness === "checking" ? "Проверяем подключение" : "Сервис временно недоступен"}</span>
               </div>
-              <button className="agentClose" type="button" aria-label="Свернуть помощника" onClick={() => setAgentOpen(false)}>−</button>
+              <button
+                className="agentClose agentExpand"
+                type="button"
+                aria-label={agentExpanded ? "Восстановить размер чата" : "Развернуть чат на весь экран"}
+                title={agentExpanded ? "Восстановить размер" : "На весь экран"}
+                onClick={() => setAgentExpanded((expanded) => !expanded)}
+              >
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d={agentExpanded ? "M2 6h4V2m8 4h-4V2M2 10h4v4m8-4h-4v4" : "M2 6V2h4m4 0h4v4M2 10v4h4m4 0h4v-4"} />
+                </svg>
+              </button>
+              <button className="agentClose" type="button" aria-label="Свернуть помощника" onClick={() => {
+                setAgentExpanded(false);
+                setAgentOpen(false);
+              }}>−</button>
             </header>
             <div className="agentConversation" role="log" aria-live="polite" aria-relevant="additions text" ref={conversationRef}>
-              {agentMessages.map((message) => <ChatMessageView key={message.id} message={message} />)}
+              {agentMessages.map((message) => (
+                <ChatMessageView
+                  key={message.id}
+                  message={message}
+                  loading={agentLoading}
+                  onRequestAlternative={requestAlternative}
+                />
+              ))}
               {agentLoading && (
                 <div className="agentMessage agentMessage-assistant">
                   <span className="agentAvatar" aria-hidden="true"><SparklesIcon /></span>
