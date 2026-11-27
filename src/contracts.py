@@ -16,6 +16,7 @@ class HardFilters(Contract):
     os: str | None = None
     country: str | None = None
     devices: int | None = Field(default=None, gt=0, strict=True)
+    min_total_price_kopecks: int | None = Field(default=None, ge=0, strict=True)
     max_total_price_kopecks: int | None = Field(default=None, ge=0, strict=True)
     budget_scope: Literal["primary", "bundle"] | None = None
     in_stock: bool | None = None

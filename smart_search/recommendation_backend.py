@@ -53,7 +53,18 @@ def recommend(spec: QuerySpec, anchors: list[Product]) -> RecommendationResult:
         return RecommendationResult(
             warnings=["recommendation_unavailable", "invalid_recommendation_planner"]
         )
-    query = native.QuerySpec.model_validate(spec.model_dump(exclude={"category_hints", "warnings"}))
+    query = native.QuerySpec.model_validate(
+        spec.model_dump(
+            exclude={
+                "category_hints",
+                "warnings",
+                "search_mode",
+                "score_threshold",
+                "product_type_hint",
+                "required_terms",
+            }
+        )
+    )
     cards = [native.Product.model_validate(anchor.model_dump()) for anchor in anchors]
     warnings = []
     try:

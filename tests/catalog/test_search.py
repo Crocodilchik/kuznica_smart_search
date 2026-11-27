@@ -145,6 +145,23 @@ def test_hybrid_and_dense_apply_identical_hard_filters(catalog, tmp_path):
             assert result.status == "ok"
             assert [hit.product.product_id for hit in result.hits] == ["1"]
 
+        # Minimum price filter (handles both single-unit and min_purchase>1 offers) & score_threshold cutoff
+        min_req = params(os="Windows", min_total_price_kopecks=200000)
+        min_req.mode = "dense"
+        assert {hit.product.product_id for hit in engine.search(min_req).hits} == {"4", "6"}
+        min_req_high = params(os="Windows", min_total_price_kopecks=1000000)
+        min_req_high.mode = "dense"
+        assert engine.search(min_req_high).hits == []
+
+        no_cutoff_req = params(os="Windows")
+        no_cutoff_req.mode = "dense"
+        assert "2" in {hit.product.product_id for hit in engine.search(no_cutoff_req).hits}
+
+        cutoff_req = params(os="Windows")
+        cutoff_req.mode = "dense"
+        cutoff_req.query_spec.score_threshold = 0.5
+        assert {hit.product.product_id for hit in engine.search(cutoff_req).hits} == {"1", "4", "6"}
+
 
 def test_rrf_preserves_unique_ids(catalog):
     first, second = catalog.get_product("1"), catalog.get_product("2")

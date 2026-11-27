@@ -15,6 +15,7 @@ class HardFilters(Contract):
     os: str | None = None
     country: str | None = None
     devices: int | None = Field(default=None, gt=0, strict=True)
+    min_total_price_kopecks: int | None = Field(default=None, ge=0, strict=True)
     max_total_price_kopecks: int | None = Field(default=None, ge=0, strict=True)
     budget_scope: Literal["primary", "bundle"] | None = None
     in_stock: bool | None = None
@@ -43,6 +44,10 @@ class QuerySpec(Contract):
     sku: str | None = None
     category: str | None = None
     category_hints: list[str] = Field(default_factory=list, max_length=3)
+    search_mode: Literal["sku", "bm25", "dense", "hybrid"] | None = None
+    score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    product_type_hint: str | None = None
+    required_terms: list[str] = Field(default_factory=list)
     hard_filters: HardFilters = Field(default_factory=HardFilters)
     preferences: Preferences = Field(default_factory=Preferences)
     clarifying_question: str | None = None

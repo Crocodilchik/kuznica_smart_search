@@ -37,6 +37,24 @@ def payload_filter(spec: QuerySpec, category_ids: list[str] | None) -> qm.Filter
                 key="price_kopecks", range=qm.Range(gte=1, lte=filters.max_total_price_kopecks)
             )
         )
+    elif filters.min_total_price_kopecks is not None:
+        must.append(qm.FieldCondition(key="price_kopecks", range=qm.Range(gte=1)))
+    if (
+        filters.min_total_price_kopecks is not None
+        and filters.min_total_price_kopecks > 1
+        and filters.devices is None
+    ):
+        must.append(
+            qm.Filter(
+                should=[
+                    qm.FieldCondition(
+                        key="price_kopecks",
+                        range=qm.Range(gte=filters.min_total_price_kopecks),
+                    ),
+                    qm.FieldCondition(key="product.min_purchase", range=qm.Range(gt=1)),
+                ]
+            )
+        )
     if filters.devices is not None:
         must += [
             qm.Filter(
@@ -71,6 +89,11 @@ def matches_filters(product: Product, spec: QuerySpec, category_ids: list[str] |
         if product.price_kopecks is None:
             return False
         if product.price_kopecks * units > filters.max_total_price_kopecks:
+            return False
+    if filters.min_total_price_kopecks is not None:
+        if product.price_kopecks is None:
+            return False
+        if product.price_kopecks * units < filters.min_total_price_kopecks:
             return False
     return True
 
@@ -173,6 +196,7 @@ class SearchEngine:
                 query=query,
                 using=using,
                 query_filter=payload_filter(spec, categories),
+                score_threshold=spec.score_threshold if mode == "dense" else None,
                 limit=batch_size,
                 offset=offset,
                 with_payload=True,

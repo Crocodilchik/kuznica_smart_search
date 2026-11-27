@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from collections import defaultdict
@@ -27,15 +28,23 @@ class DenseEncoder(Protocol):
 
 
 class FastEmbedEncoder:
-    def __init__(self, model_name: str, cache_dir: str = "data/models", threads: int = 4):
+    def __init__(self, model_name: str, cache_dir: str | None = None, threads: int | None = None):
         from fastembed import TextEmbedding
 
+        resolved_cache = (
+            cache_dir
+            or os.getenv("FASTEMBED_CACHE_PATH")
+            or str(Path(os.getenv("SOFTLINE_INDEX_DIR", "data/qdrant")).parent / "models")
+        )
+        resolved_threads = threads or int(
+            os.getenv("FASTEMBED_THREADS") or min(8, os.cpu_count() or 4)
+        )
         descriptions = {item["model"]: item for item in TextEmbedding.list_supported_models()}
         if model_name not in descriptions:
             raise ValueError(f"Unsupported FastEmbed dense model: {model_name}")
         self.model_name = model_name
         self.dimension = descriptions[model_name]["dim"]
-        self.model = TextEmbedding(model_name, cache_dir=cache_dir, threads=threads)
+        self.model = TextEmbedding(model_name, cache_dir=resolved_cache, threads=resolved_threads)
 
     def documents(self, texts):
         return [item.tolist() for item in self.model.passage_embed(texts)]
