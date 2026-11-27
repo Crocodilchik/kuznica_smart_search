@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 from contextlib import closing, contextmanager
-from functools import cache, cached_property
+from functools import cache
 from threading import RLock
 
 from qdrant_client import QdrantClient
@@ -24,15 +24,23 @@ class _QueryEncoder:
 
     def __init__(self, model_name: str):
         self.model_name = model_name
+        self._init_lock = RLock()
+        self._model = None
 
-    @cached_property
+    @property
     def model(self):
-        try:
-            return FastEmbedEncoder(self.model_name)
-        except Exception as exc:
-            # FastEmbed and ONNX providers use different exception classes.
-            # SearchEngine handles a ValueError as a failure of this branch only.
-            raise ValueError(f"dense_encoder_unavailable: {type(exc).__name__}") from exc
+        if self._model is not None:
+            return self._model
+        with self._init_lock:
+            if self._model is not None:
+                return self._model
+            try:
+                self._model = FastEmbedEncoder(self.model_name)
+            except Exception as exc:
+                # FastEmbed and ONNX providers use different exception classes.
+                # SearchEngine handles a ValueError as a failure of this branch only.
+                raise ValueError(f"dense_encoder_unavailable: {type(exc).__name__}") from exc
+            return self._model
 
     @property
     def dimension(self) -> int:
@@ -63,11 +71,54 @@ def _engine() -> SearchEngine:
 
 @contextmanager
 def _access():
-    # Qdrant local storage allows one owner per directory. Share its lazy client
-    # across the API and recommendation calls, including concurrent first use.
+    # Local single-process Qdrant storage requires exclusive serialization via _LOCK.
+    # Remote server Qdrant (QDRANT_URL) supports full concurrent requests without holding _LOCK.
     with _LOCK:
         try:
-            yield _engine()
+            engine = _engine()
+        except (
+            OSError,
+            sqlite3.Error,
+            ValueError,
+            KeyError,
+            RuntimeError,
+            UnexpectedResponse,
+            ResponseHandlingException,
+        ) as exc:
+            raise ConnectionError(f"catalog_unavailable: {type(exc).__name__}") from exc
+        is_remote = bool(engine.url)
+        if is_remote and engine.client is None:
+            try:
+                engine._open_index()
+            except (
+                OSError,
+                sqlite3.Error,
+                ValueError,
+                KeyError,
+                RuntimeError,
+                UnexpectedResponse,
+                ResponseHandlingException,
+            ) as exc:
+                raise ConnectionError(f"catalog_unavailable: {type(exc).__name__}") from exc
+
+    if is_remote:
+        try:
+            yield engine
+        except (
+            OSError,
+            sqlite3.Error,
+            ValueError,
+            KeyError,
+            RuntimeError,
+            UnexpectedResponse,
+            ResponseHandlingException,
+        ) as exc:
+            raise ConnectionError(f"catalog_unavailable: {type(exc).__name__}") from exc
+        return
+
+    with _LOCK:
+        try:
+            yield engine
         except (
             OSError,
             sqlite3.Error,
