@@ -1,0 +1,181 @@
+:root {
+  --ink: #151a31;
+  --muted: #73788d;
+  --soft: #a1a5b5;
+  --line: #e8e9ef;
+  --paper: #ffffff;
+  --background: #f6f7fb;
+  --blue: #4359e9;
+  --blue-deep: #3147d4;
+  --blue-wash: #f0f2ff;
+  --green: #237b53;
+  --red: #bd474d;
+  --amber: #a66a19;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(ellipse at 79% 10%, rgba(110, 126, 255, .11), transparent 29rem),
+    var(--background);
+  color: var(--ink);
+  font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button, textarea { font: inherit; }
+button:focus-visible, a:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 3px solid #97a5ff; outline-offset: 3px; }
+.pageShell { width: min(1100px, calc(100% - 48px)); margin: 0 auto; }
+.siteHeader { height: 88px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(21,26,49,.06); }
+.brand { display: inline-flex; align-items: center; gap: 11px; color: inherit; text-decoration: none; }
+.brandMark { display: grid; place-items: center; width: 37px; height: 37px; border-radius: 12px; color: white; background: var(--blue); font: 800 24px/1 "Manrope", sans-serif; }
+.brand strong { display: block; font: 800 16px/1.05 "Manrope", sans-serif; letter-spacing: -.6px; }
+.brand small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; letter-spacing: .55px; text-transform: uppercase; }
+.serviceState { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.serviceDot { width: 8px; height: 8px; border-radius: 50%; background: #aeb2c0; }
+.service-ready .serviceDot { background: #43a775; box-shadow: 0 0 0 4px rgba(67,167,117,.12); }
+.service-unavailable .serviceDot { background: #d75a60; box-shadow: 0 0 0 4px rgba(215,90,96,.12); }
+.hero { min-height: 294px; padding: 61px 47px 52px; display: flex; align-items: center; justify-content: space-between; position: relative; overflow: hidden; }
+.heroCopy { max-width: 650px; position: relative; z-index: 1; }
+.eyebrow { margin: 0 0 13px; color: var(--blue); font-size: 11px; line-height: 1.4; font-weight: 700; letter-spacing: 1.15px; text-transform: uppercase; }
+h1, h2, h3, p { margin-top: 0; }
+.hero h1 { margin: 0; font: 800 clamp(37px, 5vw, 52px)/1.08 "Manrope", sans-serif; letter-spacing: -2px; }
+.hero h1 span { color: var(--blue); }
+.heroDescription { max-width: 600px; margin: 18px 0 0; color: var(--muted); font-size: 15px; line-height: 1.65; }
+.heroOrb { width: 174px; height: 174px; margin-right: 24px; display: grid; place-items: center; position: relative; border: 1px solid rgba(76,97,226,.15); border-radius: 50%; background: radial-gradient(circle at 38% 34%, white 0 16%, #edf0ff 46%, #dfe4ff 100%); box-shadow: 0 20px 58px rgba(70,85,200,.12), inset 0 2px 16px rgba(255,255,255,.8); color: var(--blue); }
+.heroOrb::before, .heroOrb::after { content: ""; position: absolute; border: 1px solid rgba(76,97,226,.12); border-radius: 50%; }
+.heroOrb::before { inset: -16px; }
+.heroOrb::after { inset: 17px; background: linear-gradient(145deg, rgba(255,255,255,.56), transparent 70%); }
+.heroOrb span { margin-top: -14px; font: 300 116px/.8 "Manrope", sans-serif; transform: rotate(-17deg); }
+.searchPanel { position: relative; margin: 0 0 27px; padding: 30px 34px 25px; border: 1px solid rgba(28,35,73,.08); border-radius: 18px; background: var(--paper); box-shadow: 0 14px 44px rgba(27,35,79,.055); }
+.searchPanel h2 { margin: 0 0 17px; font: 700 18px "Manrope", sans-serif; letter-spacing: -.3px; }
+.inputFrame { display: flex; align-items: flex-start; gap: 13px; min-height: 78px; padding: 16px 18px 13px; border: 1px solid #dcdfeb; border-radius: 12px; background: #fdfdff; transition: border-color .2s, box-shadow .2s; }
+.inputFrame:focus-within { border-color: #8290f3; box-shadow: 0 0 0 4px rgba(67,89,233,.08); }
+.inputIcon { color: var(--blue); font: 300 32px/.9 "Manrope", sans-serif; transform: rotate(-17deg); }
+.inputFrame textarea { width: 100%; min-height: 47px; padding: 1px 0 0; resize: vertical; border: 0; outline: none; background: transparent; color: var(--ink); font-size: 15px; line-height: 1.55; }
+.inputFrame textarea::placeholder { color: #a2a6b6; }
+.inputFrame textarea:disabled { opacity: .6; }
+.charCount { flex: 0 0 auto; padding-top: 4px; color: #a2a6b6; font-size: 11px; }
+.searchActions { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.readinessHint { min-height: 18px; display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.readinessHint[role="alert"] { color: #a63e45; }
+.textButton { padding: 0; border: 0; background: none; color: var(--blue); cursor: pointer; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.searchButton { min-width: 171px; height: 45px; display: inline-flex; justify-content: center; align-items: center; gap: 13px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--blue); color: white; box-shadow: 0 7px 15px rgba(67,89,233,.2); cursor: pointer; font-size: 13px; font-weight: 700; transition: background .18s, transform .18s, box-shadow .18s; }
+.searchButton:not(:disabled):hover { background: var(--blue-deep); box-shadow: 0 9px 20px rgba(67,89,233,.27); transform: translateY(-1px); }
+.searchButton:disabled { background: #aab1da; box-shadow: none; cursor: not-allowed; }
+.buttonSpinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.4); border-top-color: white; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.examplesBlock { padding-top: 19px; border-top: 1px solid #f0f1f5; }
+.examplesBlock > p { margin: 0 0 11px; color: var(--soft); font-size: 11px; font-weight: 600; }
+.exampleList { display: flex; flex-wrap: wrap; gap: 8px; }
+.exampleChip { max-width: 100%; padding: 8px 12px; border: 1px solid #e8eaf3; border-radius: 8px; background: #fff; color: #5d6378; cursor: pointer; font-size: 11px; line-height: 1.3; transition: background .15s, color .15s, border-color .15s; }
+.exampleChip:hover:not(:disabled) { border-color: #c9cff9; background: var(--blue-wash); color: var(--blue-deep); }
+.exampleChip:disabled { cursor: default; opacity: .55; }
+.trustNote { display: flex; align-items: center; gap: 12px; padding: 14px 17px; border: 1px solid #e8eaf4; border-radius: 11px; background: rgba(255,255,255,.58); color: var(--muted); }
+.trustNote > span { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 8px; background: var(--blue-wash); color: var(--blue); font-size: 15px; }
+.trustNote p { margin: 0; font-size: 12px; line-height: 1.5; }
+.resultPanel { margin: 0 0 24px; padding: 27px; border: 1px solid rgba(28,35,73,.08); border-radius: 18px; background: var(--paper); box-shadow: 0 14px 44px rgba(27,35,79,.045); }
+.resultHeader { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin-bottom: 20px; }
+.resultHeader .eyebrow { margin-bottom: 5px; font-size: 10px; }
+.resultHeader h2 { margin: 0; font: 700 22px "Manrope", sans-serif; letter-spacing: -.6px; }
+.statusMark { padding: 7px 10px; border-radius: 20px; background: #fff6e8; color: #9b671b; font-size: 11px; font-weight: 700; }
+.statusNote { margin: -6px 0 18px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.clarificationBox { display: flex; gap: 13px; margin: 4px 0 17px; padding: 17px; border: 1px solid #dfe3ff; border-radius: 11px; background: #f5f6ff; }
+.clarificationIcon { flex: 0 0 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: var(--blue); color: white; font-weight: 700; }
+.clarificationBox h3 { margin: 0 0 5px; font-size: 14px; }
+.clarificationBox p { margin: 0 0 5px; color: var(--ink); font-size: 14px; font-weight: 600; }
+.clarificationBox div > span { color: var(--muted); font-size: 11px; }
+.emptyMessage { margin: 0; padding: 17px; border-radius: 10px; background: #f7f8fb; color: var(--muted); font-size: 13px; }
+.notice { display: flex; gap: 12px; align-items: flex-start; padding: 16px; border-radius: 11px; }
+.noticeError { border: 1px solid #f1d6d7; background: #fff7f6; color: #844148; }
+.noticeIcon { width: 24px; height: 24px; flex: 0 0 24px; display: grid; place-items: center; border-radius: 50%; background: #fae5e4; font-weight: 800; }
+.notice h2, .notice strong { margin: 0 0 4px; font: 700 13px "Manrope", sans-serif; }
+.notice p { margin: 0 0 4px; font-size: 12px; line-height: 1.5; }
+.notice span:last-child { font-size: 11px; color: #9c6a6d; }
+.searchError { margin-bottom: 24px; }
+.searchError h2 { margin-bottom: 4px; }
+.resultGroup { margin-top: 23px; }
+.groupHeading { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+.groupHeading h3 { margin: 0; font: 700 15px "Manrope", sans-serif; }
+.groupHeading > span { min-width: 22px; height: 22px; padding: 0 6px; display: grid; place-items: center; border-radius: 7px; background: #f0f1f7; color: #686e84; font-size: 10px; font-weight: 700; }
+.productGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.productCard { min-width: 0; padding: 17px; border: 1px solid #e8eaf1; border-radius: 12px; background: #fff; }
+.productTopline { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-bottom: 11px; }
+.categoryPill { max-width: 100%; padding: 5px 8px; border-radius: 6px; background: var(--blue-wash); color: #4e60c9; font-size: 10px; line-height: 1.3; font-weight: 700; }
+.stock { font-size: 10px; line-height: 1.5; }
+.stockAvailable { color: var(--green); }
+.stockUnavailable { color: var(--red); }
+.stockUnknown { color: #898da0; }
+.productCard h3 { margin: 0 0 7px; font: 700 15px/1.4 "Manrope", sans-serif; overflow-wrap: anywhere; }
+.productMeta { margin: 0 0 7px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.productPrice { margin: 12px 0; color: var(--ink); font: 700 18px "Manrope", sans-serif; letter-spacing: -.4px; }
+.productDescription { margin: 10px 0; color: #555b70; font-size: 12px; line-height: 1.55; white-space: pre-line; }
+.attributesList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 11px 0 0; padding-top: 10px; border-top: 1px solid #f0f1f5; }
+.attributesList div { min-width: 0; }
+.attributesList dt { margin-bottom: 2px; color: var(--soft); font-size: 9px; }
+.attributesList dd { margin: 0; color: #555b70; font-size: 10px; overflow-wrap: anywhere; }
+.recommendationDetails { margin-top: 12px; padding-top: 11px; border-top: 1px solid #f0f1f5; }
+.recommendationDetails > p { margin: 0 0 9px; color: #4e5367; font-size: 12px; line-height: 1.5; }
+.recommendationDetails summary, .warningsBlock summary { color: var(--blue-deep); cursor: pointer; font-size: 11px; font-weight: 700; }
+.recommendationDetails ul, .warningsBlock ul { display: grid; gap: 8px; margin: 10px 0 0; padding: 0 0 0 17px; }
+.evidenceItem { color: #51576b; font-size: 11px; line-height: 1.5; }
+.evidenceMeta { display: block; margin-top: 3px; color: var(--soft); font-size: 10px; }
+.evidenceMeta a { color: var(--blue); text-decoration: none; }
+.evidenceMeta a:hover { text-decoration: underline; }
+.productLink { display: inline-flex; align-items: center; gap: 7px; margin-top: 14px; color: var(--blue); text-decoration: none; font-size: 11px; font-weight: 700; }
+.productLink:hover { text-decoration: underline; text-underline-offset: 3px; }
+.warningsBlock { margin-top: 17px; padding-top: 13px; border-top: 1px solid #f0f1f5; }
+.warningsBlock li { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.siteFooter { display: flex; justify-content: space-between; gap: 16px; padding: 25px 0 34px; margin-top: 12px; color: #999dae; font-size: 10px; }
+.siteFooter span:first-child { color: #777c91; font-weight: 700; }
+.visuallyHidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+@media (max-width: 760px) {
+  .pageShell { width: min(100% - 32px, 600px); }
+  .siteHeader { height: 74px; }
+  .hero { min-height: 0; padding: 45px 4px 35px; }
+  .hero h1 { font-size: clamp(34px, 8vw, 46px); letter-spacing: -1.6px; }
+  .heroDescription { max-width: 500px; font-size: 13px; }
+  .heroOrb { width: 106px; height: 106px; flex: 0 0 106px; margin: 0 9px 0 14px; }
+  .heroOrb::before { inset: -9px; }
+  .heroOrb::after { inset: 11px; }
+  .heroOrb span { font-size: 72px; }
+  .searchPanel { padding: 23px 19px 19px; border-radius: 15px; }
+  .searchActions { align-items: flex-end; }
+  .readinessHint { align-items: flex-start; flex-direction: column; }
+  .searchButton { min-width: 144px; }
+  .resultPanel { padding: 20px 17px; }
+}
+@media (max-width: 520px) {
+  .pageShell { width: calc(100% - 28px); }
+  .siteHeader { height: 68px; }
+  .brandMark { width: 33px; height: 33px; }
+  .brand strong { font-size: 14px; }
+  .serviceState { max-width: 122px; font-size: 10px; }
+  .hero { padding: 38px 0 28px; }
+  .heroOrb { display: none; }
+  .hero h1 { font-size: 36px; }
+  .heroDescription { margin-top: 14px; font-size: 12px; }
+  .searchPanel { padding: 20px 15px 16px; }
+  .searchPanel h2 { font-size: 16px; }
+  .inputFrame { min-height: 75px; padding: 13px 12px 10px; gap: 8px; }
+  .inputIcon { font-size: 27px; }
+  .inputFrame textarea { font-size: 13px; }
+  .charCount { font-size: 9px; }
+  .searchActions { align-items: stretch; flex-direction: column; gap: 10px; padding: 11px 0 14px; }
+  .readinessHint { min-height: 0; flex-direction: row; flex-wrap: wrap; }
+  .searchButton { width: 100%; }
+  .exampleList { gap: 6px; }
+  .exampleChip { padding: 7px 9px; font-size: 10px; text-align: left; }
+  .resultHeader { align-items: flex-start; flex-direction: column; }
+  .resultHeader h2 { font-size: 18px; }
+  .productGrid { grid-template-columns: 1fr; }
+  .productCard { padding: 15px; }
+  .attributesList { grid-template-columns: 1fr 1fr; }
+  .siteFooter { flex-direction: column; gap: 5px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

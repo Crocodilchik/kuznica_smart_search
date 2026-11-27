@@ -1,6 +1,6 @@
 # Умный поиск Softline
 
-Прототип принимает запрос на естественном языке, ищет товары, проверяет ограничения и показывает связанные предложения с основанием. Страница аналитики показывает число поисков, статусы, причины недобора и p95.
+Прототип принимает запрос на естественном языке, ищет товары, проверяет ограничения и показывает связанные предложения с основанием. В Streamlit остаётся аналитика по поискам, статусам, причинам недобора и p95.
 
 ## Единый пайплайн
 
@@ -15,7 +15,7 @@
    uv run --locked --env-file .env python -X utf8 -m softline_search index --catalog data/catalog --output data/qdrant
    ```
 
-4. Для работы через браузер запустите `uv run --locked python -m streamlit run smart_search/interfaces/web.py`. Форма вызывает весь граф в этом процессе. Для HTTP API используйте `uv run --locked python -m uvicorn smart_search.interfaces.api:app --host 127.0.0.1 --port 8000`. Интерактивная документация доступна по адресу `http://127.0.0.1:8000/docs`. Если запускаете оба процесса одновременно, укажите для Streamlit `SMART_SEARCH_API_URL=http://127.0.0.1:8000`. Тогда локальным Qdrant владеет только процесс API. Для нескольких процессов поиска нужен сервер Qdrant.
+4. Для работы через браузер запустите Node.js-фронтенд из `frontend/` (`npm ci`, затем `npm run dev`). Нужен Node.js 24 LTS. В `.env` задайте `SMART_SEARCH_API_URL=http://127.0.0.1:8000`; серверный маршрут Next.js передаст запрос в FastAPI. Для HTTP API используйте `uv run --locked python -m uvicorn smart_search.interfaces.api:app --host 127.0.0.1 --port 8000`. Интерактивная документация доступна по адресу `http://127.0.0.1:8000/docs`. Streamlit остаётся отдельным интерфейсом для демонстрационного режима, аналитики и массовой проверки примеров; для этих экранов в API пока нет контрактов.
 5. Для аналитики укажите адрес брокера в `SMART_SEARCH_KAFKA_BOOTSTRAP_SERVERS` и создайте топик `smart-search.search-events.v1`. При пустом адресе приложение сообщает об ошибке доставки в журнале и возвращает пользователю найденные товары. [Контракт событий](docs/contracts/contract_events_interface.md)
 
 Пример проверки готовности и поиска артикула через API из PowerShell:
@@ -41,6 +41,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/v1/search -ContentType
 | [smart_search](smart_search) | Модели, контракт инструментов, граф Supervisor, выбор режима и аналитика. |
 | [smart_search/modes](smart_search/modes) | Демонстрационные адаптеры `test` и загрузка рабочего модуля для `prod`. |
 | [smart_search/interfaces](smart_search/interfaces) | Streamlit, HTTP API и JSON-настройки интерфейса. |
+| [frontend](frontend) | Node.js, Next.js, React и TypeScript; серверный прокси к FastAPI и поисковая страница. |
 | [smart_search/events](smart_search/events) | Выбор получателя событий и Kafka-продьюсер для аналитики. |
 | [scripts](scripts) | Команды оценки качества. |
 | [tests](tests) | Модульные проверки в `unit/`, интеграционные проверки в `integration/` и данные в `fixtures/`. |
@@ -50,30 +51,31 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/v1/search -ContentType
 
 На Windows и macOS нужен Docker Desktop в режиме Linux-контейнеров. На Linux подойдут Docker Engine и Compose 2.24 или новее. Python на компьютере устанавливать отдельно не нужно. [Требование к версии Compose](https://docs.docker.com/reference/compose-file/services/#env_file)
 
-Из корня репозитория запустите демо:
+Из корня репозитория запустите приложение:
 
 ```text
 docker compose up --build -d
 docker compose ps
 ```
 
-Откройте [127.0.0.1:8501](http://127.0.0.1:8501). По умолчанию Compose запускает режим `test` без ключа DeepSeek. Если порт занят, задайте `SMART_SEARCH_PORT=8502` в окружении или в локальном `.env` и откройте новый порт.
+Откройте [127.0.0.1:3000](http://127.0.0.1:3000). Compose запускает FastAPI в режиме `prod` и Node.js-фронтенд; Node обращается к FastAPI по внутреннему адресу Compose. Для первого запуска полного каталога используйте шаги подготовки ниже. Порт фронтенда задаётся через `SMART_SEARCH_FRONTEND_PORT`, порт API для локальной диагностики — через `SMART_SEARCH_API_PORT`.
 
 Для полного каталога положите выданный XML в `data/raw/Mindbox.yml.gz.xml`. Папка [`data/raw/`](data/raw/README.md) входит в репозиторий, а каждый разработчик добавляет туда свою локальную копию выгрузки. Для файла в другом месте укажите `SOFTLINE_FEED_PATH`. Например, в PowerShell для XML в корне проекта:
 
 ```powershell
 $env:SOFTLINE_FEED_PATH = './Mindbox.yml.gz.xml'
-docker compose stop app
+docker compose stop api
 docker compose run --rm --build catalog
 if ($LASTEXITCODE -ne 0) { throw 'Не удалось собрать каталог' }
-$env:SMART_SEARCH_MODE = 'prod'
 $env:DEEPSEEK_API_KEY = [Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY', 'User')
-docker compose up -d
+docker compose up -d --build
 ```
 
-На другой машине настройки модели можно задать в локальном `.env` по образцу [`.env.example`](.env.example). Для внешнего брокера или Qdrant указывайте адрес, доступный **из контейнера**. Локальный Qdrant и демо запускаются без этих сервисов. Каталог, индекс и события демо сохраняются в томе `search-data`. Для остановки выполните `docker compose down`.
+На другой машине настройки модели можно задать в локальном `.env` по образцу [`.env.example`](.env.example). Для внешнего брокера или Qdrant указывайте адрес, доступный **из контейнера**. Каталог, индекс и события сохраняются в томе `search-data`. Для остановки выполните `docker compose down`.
 
-Если Docker Engine запущен внутри WSL и контейнер останавливается после выхода из сеанса WSL, запускайте `docker compose up --no-build app` без `-d` и оставляйте терминал открытым. Первый запрос к полному локальному каталогу может занять больше времени: Qdrant загружает данные и подготавливает текстовый индекс в памяти.
+Node.js-фронтенд обращается только к серверному маршруту `/api/search`. Для локального запуска задайте `SMART_SEARCH_API_URL` в `.env`; внутренняя переменная не имеет префикса `NEXT_PUBLIC_`. Compose задаёт её как `http://api:8000`. Готовность проверяется через `/api/health/ready`. Синхронный запрос к API может длиться до 120 секунд. Streamlit не удалён: его демонстрационные экраны аналитики и массовой проверки примеров запускаются отдельно и остаются вне Node UI, поскольку HTTP API для них отсутствует.
+
+Если Docker Engine запущен внутри WSL и контейнер останавливается после выхода из сеанса WSL, запускайте `docker compose up --no-build` без `-d` и оставляйте терминал открытым. Первый запрос к полному локальному каталогу может занять больше времени: Qdrant загружает данные и подготавливает текстовый индекс в памяти.
 
 ## Запуск в режиме test
 

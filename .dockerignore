@@ -22,8 +22,13 @@
 !src/structured.py
 !data/
 !data/recommendation_graph.json
+!frontend/
+!frontend/**
 **/__pycache__
 **/*.py[cod]
+**/node_modules
+**/.next
+**/coverage
 **/.env
 **/.env.*
 **/*.key

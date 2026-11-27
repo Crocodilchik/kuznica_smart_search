@@ -56,6 +56,11 @@ module2/lit/Mindbox.yml.gz.xml
 /data/*.tmp
 /reports/raw_profile.json
 /data/qdrant-*/
+frontend/node_modules/
+frontend/.next/
+frontend/coverage/
+frontend/tsconfig.tsbuildinfo
+npm-debug.log*
 Mindbox.yml.gz.xml
 /data/catalog.db
 /data/search_index.npz

@@ -4,23 +4,59 @@ x-image: &app-image
     context: .
 
 services:
-  app:
+  api:
     <<: *app-image
     init: true
     env_file:
       - path: .env
         required: false
     environment:
-      SMART_SEARCH_MODE: ${SMART_SEARCH_MODE:-test}
-      SMART_SEARCH_BACKEND_MODULE: ${SMART_SEARCH_BACKEND_MODULE:-smart_search.backend}
+      SMART_SEARCH_MODE: prod
+      SMART_SEARCH_BACKEND_MODULE: smart_search.backend
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       SOFTLINE_CATALOG_DIR: /var/lib/smart-search/catalog
       SOFTLINE_INDEX_DIR: /var/lib/smart-search/qdrant
       SMART_SEARCH_EVENT_DB: /var/lib/smart-search/events.sqlite3
     ports:
-      - "127.0.0.1:${SMART_SEARCH_PORT:-8501}:8501"
+      - "127.0.0.1:${SMART_SEARCH_API_PORT:-8000}:8000"
     volumes:
       - search-data:/var/lib/smart-search
+    command:
+      - python
+      - -m
+      - uvicorn
+      - smart_search.interfaces.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health/ready', timeout=3).close()
+      interval: 20s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  frontend:
+    image: kuznica-smart-search-frontend:local
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    init: true
+    environment:
+      NODE_ENV: production
+      SMART_SEARCH_API_URL: http://api:8000
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${SMART_SEARCH_FRONTEND_PORT:-3000}:3000"
 
   catalog:
     <<: *app-image
