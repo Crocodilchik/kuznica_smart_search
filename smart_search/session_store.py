@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,8 +19,35 @@ _REDIS_ERRORS = (RedisError, OSError, TimeoutError)
 
 DEFAULT_SESSION_TTL_SECONDS = 86_400  # 24 hours
 DEFAULT_MAX_HISTORY_ITEMS = 200
-DEFAULT_CONTEXT_WINDOW_ITEMS = 8
-DEFAULT_CONTEXT_MAX_CHARS = 1200
+DEFAULT_CONTEXT_WINDOW_ITEMS = 1
+DEFAULT_CONTEXT_MAX_CHARS = 500
+
+_FOLLOWUP_START_RE = re.compile(
+    r"^(?:а|и|но|тогда|теперь|давай(?:те)?|лучше|желательно|можно|ещ[её]|до|от|не\s+дороже|не\s+дешевле|бюджет\w*|подешевле|дешевле|подороже|дороже|под|для|на|с|без|в\s+наличии)\b",
+    re.IGNORECASE,
+)
+_FOLLOWUP_ANAPHORA_RE = re.compile(
+    r"\b(?:к\s+нему|к\s+ней|для\s+него|для\s+не[её]|вместо\s+него|вместо\s+не[её]|к\s+этом\w*|от\s+не[её]|этого|такой\s+же|такую\s+же|такие\s+же)\b",
+    re.IGNORECASE,
+)
+_FOLLOWUP_SINGLE_ADJ_RE = re.compile(
+    r"^(?:беспроводн\w+|проводн\w+|игров\w+|офисн\w+|красн\w+|ч[её]рн\w+|бел\w+|сер\w+|российск\w+|отечественн\w+|платинов\w+|золот\w+|бронзов\w+|титанов\w+|rgb|\d+\s*(?:к|k|тыс\w*|руб\w*|₽)?)$",
+    re.IGNORECASE,
+)
+
+
+def is_followup_query(query: str, last_turn: SessionTurn | None) -> bool:
+    """Return True only when the new query refines or answers the previous turn."""
+    if last_turn is None:
+        return False
+    if last_turn.status == "clarification_needed" or last_turn.clarifying_question:
+        return True
+    cleaned = query.strip()
+    if not cleaned:
+        return False
+    if _FOLLOWUP_START_RE.search(cleaned) or _FOLLOWUP_ANAPHORA_RE.search(cleaned):
+        return True
+    return bool(_FOLLOWUP_SINGLE_ADJ_RE.fullmatch(cleaned))
 
 
 class SessionTurn(Contract):
@@ -67,7 +95,7 @@ def format_context(
     recent = turns[-max_items:]
     lines: list[str] = []
     for turn in recent:
-        parts = [f"Запрос: {turn.query}"]
+        parts = [f"Предыдущий запрос: {turn.query}"]
         if turn.clarifying_question:
             parts.append(f"Уточнение: {turn.clarifying_question}")
         elif turn.top_titles:
@@ -139,8 +167,12 @@ class RedisSessionStore:
                 LOGGER.debug("Skipping malformed session turn for session_id=%s", session_id)
         return turns
 
-    async def get_context(self, session_id: str) -> str | None:
+    async def get_context(self, session_id: str, *, query: str | None = None) -> str | None:
         turns = await self.get_history(session_id)
+        if not turns:
+            return None
+        if query is not None and not is_followup_query(query, turns[-1]):
+            return None
         return format_context(turns)
 
     async def append_turn(

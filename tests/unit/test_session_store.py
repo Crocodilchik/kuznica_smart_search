@@ -7,7 +7,12 @@ from fastapi.testclient import TestClient
 
 from smart_search.contracts import Product, SearchResponse
 from smart_search.interfaces import api as api_module
-from smart_search.session_store import RedisSessionStore, SessionTurn, format_context
+from smart_search.session_store import (
+    RedisSessionStore,
+    SessionTurn,
+    format_context,
+    is_followup_query,
+)
 
 
 class FakePipeline:
@@ -90,10 +95,35 @@ async def test_redis_session_store_persists_full_24h_history_and_clears():
     assert fake.ttls["smart_search:session:sess-1"] == 86_400
 
     ctx = await store.get_context("sess-1")
-    assert ctx is not None and "хочу мышку до 10 тыс" in ctx and "Мышь беспроводная" in ctx
+    assert ctx is not None and "а покажи беспроводную" in ctx and "Мышь беспроводная" in ctx
+    assert await store.get_context("sess-1", query="мышь") is None
+    assert await store.get_context("sess-1", query="а до 5к?") is not None
 
     assert await store.clear("sess-1") is True
     assert await store.get_history("sess-1") == []
+
+
+def test_is_followup_query_distinguishes_refinements_from_new_products():
+    prev_ok = SessionTurn(
+        timestamp=datetime.now(UTC),
+        query="Антивирь для винды на 50 компов до 100к",
+        status="ok",
+        product_count=12,
+    )
+    prev_clarify = SessionTurn(
+        timestamp=datetime.now(UTC),
+        query="вава",
+        status="clarification_needed",
+        product_count=0,
+        clarifying_question="Уточните, что ищете?",
+    )
+    assert is_followup_query("а под Linux?", prev_ok) is True
+    assert is_followup_query("подешевле", prev_ok) is True
+    assert is_followup_query("беспроводную", prev_ok) is True
+    assert is_followup_query("к нему", prev_ok) is True
+    assert is_followup_query("мышь", prev_ok) is False
+    assert is_followup_query("красная клавиатура", prev_ok) is False
+    assert is_followup_query("мышка", prev_clarify) is True
 
 
 @pytest.mark.asyncio
@@ -154,11 +184,18 @@ def test_api_hydrates_previous_context_and_exposes_session_endpoints(prod_backen
         assert r2.status_code == 200
         assert seen_contexts[-1] is not None and "Монитор 27 дюймов" in seen_contexts[-1]
 
+        r3 = client.post(
+            "/v1/search",
+            json={"query": "мышь", "session_id": "anon-42"},
+        )
+        assert r3.status_code == 200
+        assert seen_contexts[-1] is None
+
         hist = client.get("/v1/sessions/anon-42")
         assert hist.status_code == 200
         body = hist.json()
         assert body["ttl_seconds"] == 86_400
-        assert len(body["turns"]) == 2
+        assert len(body["turns"]) == 3
 
         cleared = client.delete("/v1/sessions/anon-42")
         assert cleared.status_code == 200 and cleared.json()["cleared"] is True

@@ -104,6 +104,9 @@ PROMPT = """Ты — главный ИИ-маршрутизатор и инте�
    - `in_stock`: true, если явно запрошено «в наличии»;
    - `budget_scope`: "bundle" для комплекта, иначе "primary", если задан бюджет.
 8. Не придумывай артикулы, бренды, цены или ограничения. Если запрос принципиально неоднозначен или содержит отрицание без выбора («антивирус не для Windows»), задай короткий `clarifying_question`.
+9. Как использовать `previous_context`:
+   - Опирайся на `previous_context` ТОЛЬКО если текущий `request` является прямым продолжением или уточнением предыдущего запроса (например: «подешевле», «до 5 тысяч», «беспроводную», «под Linux», «что к нему докупить?», ответ на `clarifying_question`).
+   - Если `request` называет НОВЫЙ самостоятельный товар или категорию (например, после «антивирус под Windows на 50 компов» пользователь ввёл «мышь», «красная клавиатура» или «сервер»), полностью ИГНОРИРУЙ старые `hard_filters` (`os`, `devices`, `country`, бюджет) и старый товар из `previous_context`.
 
 Примеры:
 Запрос: «хачу мышку да 10 тыщ рублей»
@@ -126,6 +129,12 @@ PROMPT = """Ты — главный ИИ-маршрутизатор и инте�
 
 Запрос: «что докупить к Astra Linux Special Edition 1.8?»
 Ответ: {"raw_query":"что докупить к Astra Linux Special Edition 1.8?","normalized_query":"Astra Linux Special Edition 1.8","intent":"complements","search_mode":"bm25"}
+
+Вход с контекстом (уточнение предыдущего товара): {"request": "а беспроводную до 5к?", "previous_context": "Предыдущий запрос: мышь"}
+Ответ: {"raw_query":"а беспроводную до 5к?","normalized_query":"беспроводная компьютерная мышь","intent":"product_search","search_mode":"dense","score_threshold":0.35,"product_type_hint":"мышь","required_terms":["беспроводная"],"hard_filters":{"max_total_price_kopecks":500000,"budget_scope":"primary"}}
+
+Вход с контекстом (смена товара — старые фильтры НЕ переносятся): {"request": "мышь", "previous_context": "Предыдущий запрос: Антивирь для винды на 50 компов до 100к"}
+Ответ: {"raw_query":"мышь","normalized_query":"компьютерная мышь","intent":"product_search","search_mode":"dense","score_threshold":0.35,"product_type_hint":"мышь","hard_filters":{}}
 """
 
 

@@ -67,7 +67,7 @@ async def search(request: SearchRequest, response: Response) -> SearchResponse:
     runner = await run_in_threadpool(get_search_runner, require_prod=True)
     enriched = request
     if request.session_id and not request.previous_context:
-        stored_context = await session_store.get_context(request.session_id)
+        stored_context = await session_store.get_context(request.session_id, query=request.query)
         if stored_context:
             enriched = request.model_copy(update={"previous_context": stored_context})
 
