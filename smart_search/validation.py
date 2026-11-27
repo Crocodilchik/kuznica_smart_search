@@ -16,6 +16,7 @@ from smart_search.contracts import (
     SearchResult,
     ValidationResult,
 )
+from smart_search.understanding import MOUSE, RGB
 from softline_search.licensing import units_to_buy
 from softline_search.text import canonical_os, sku_key
 
@@ -56,6 +57,22 @@ def _identity(product: Product, spec: QuerySpec, category_ids: set[str]) -> str 
             or re.search(r"рабочая станция", product.title, re.IGNORECASE)
         ):
             return "product_type_mismatch"
+    if (
+        spec.intent == "product_search"
+        and MOUSE.search(spec.normalized_query)
+        and RGB.search(spec.raw_query)
+    ):
+        if not re.search(r"\b(?:мышь|мышка|mouse)\b", product.title, re.IGNORECASE) or re.search(
+            r"\b(?:клавиатур\w*|коврик\w*|keyboard|mousepad)\b", product.title, re.IGNORECASE
+        ):
+            return "product_type_mismatch"
+        sources = [product.title, product.description, *map(str, product.attributes.values())]
+        if not any(
+            RGB.search(value)
+            and not re.search(r"\b(?:без|no)\s+(?:rgb|ргб)\b", value, re.IGNORECASE)
+            for value in sources
+        ):
+            return "rgb_unconfirmed"
     # Restrict dotted product versions only when attached to a name, not prices or SKU parts.
     versions = re.findall(
         r"(?<=[^\W\d_])\s+(?:v(?:ersion)?\s*)?(\d+(?:\.\d+)+)\b",

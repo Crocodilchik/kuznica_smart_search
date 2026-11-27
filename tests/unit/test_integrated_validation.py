@@ -29,6 +29,30 @@ def check(products, *, spec=None, drafts=(), evidence=()):
     )
 
 
+def test_rgb_mouse_excludes_unrelated_products_and_unconfirmed_lighting(monkeypatch):
+    monkeypatch.setattr("smart_search.validation.resolve_category", lambda _: ["82833"])
+    spec = QuerySpec(
+        raw_query="хочу мышку настольную купить с ргб подсветкой",
+        normalized_query="мышь RGB",
+        category="82833",
+    )
+    products = [
+        Product(product_id="scanner", title="Настольный сканер RGB", category="Сканеры"),
+        Product(
+            product_id="keyboard", title="Клавиатура RGB", category="Периферия", category_id="82833"
+        ),
+        Product(
+            product_id="mouse", title="Мышь проводная", category="Периферия", category_id="82833"
+        ),
+        Product(product_id="lit", title="Мышь с RGB", category="Периферия", category_id="82833"),
+    ]
+    result = check(products, spec=spec)
+    assert [item.product_id for item in result.products] == ["lit"]
+    assert {"category_mismatch", "product_type_mismatch", "rgb_unconfirmed"} <= set(
+        result.reason_codes
+    )
+
+
 def test_strict_os_country_stock_license_metric_and_price():
     filters = HardFilters(
         os="Windows", country="RU", in_stock=True, devices=50, max_total_price_kopecks=5_000

@@ -27,6 +27,33 @@ def test_slang_and_kopecks_survive_without_a_model():
     assert not spec.warnings
 
 
+@pytest.mark.parametrize("repeat", [1, 2])
+def test_monitor_slang_keeps_the_budget_out_of_the_search_text(monkeypatch, repeat):
+    monkeypatch.setattr(
+        "smart_search.understanding.resolve_category",
+        lambda category: ["80843"] if category == "Компьютерная периферия > Мониторы" else [],
+    )
+    request = SearchRequest(query=" ".join(["хочу моник купит до 30 тыс"] * repeat))
+    spec = understand(request)
+    assert spec.raw_query == request.query
+    assert spec.category == "80843"
+    assert spec.normalized_query == "монитор"
+    assert spec.hard_filters.max_total_price_kopecks == 3_000_000
+    assert not spec.warnings
+
+
+def test_rgb_mouse_query_uses_the_actual_catalog_category(monkeypatch):
+    monkeypatch.setattr(
+        "smart_search.understanding.resolve_category",
+        lambda category: (
+            ["82833"] if category == "Компьютерная периферия > Клавиатуры, мыши, комплекты" else []
+        ),
+    )
+    spec = understand(SearchRequest(query="хочу мышку настольную купить с ргб подсветкой"))
+    assert spec.category == "82833"
+    assert spec.normalized_query == "мышь RGB"
+
+
 @pytest.mark.parametrize(
     ("text", "intent", "sku"),
     [
