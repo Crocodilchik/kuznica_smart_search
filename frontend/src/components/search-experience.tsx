@@ -532,12 +532,7 @@ function getResponseText(response: SearchResponse): string {
   return "Нашёл варианты в каталоге. Посмотрите товары ниже и уточните требования, если нужен более точный подбор.";
 }
 
-type ChatProductActions = {
-  loading: boolean;
-  onRequestAlternative: (product: Product) => void;
-};
-
-function ChatProducts({ response, loading, onRequestAlternative }: { response: SearchResponse } & ChatProductActions) {
+function ChatProducts({ response }: { response: SearchResponse }) {
   const items = [
     ...response.recommendations.map((recommendation) => ({
       product: recommendation.product,
@@ -579,15 +574,6 @@ function ChatProducts({ response, loading, onRequestAlternative }: { response: S
                 </details>
               )}
               {link && <a className="productLink" href={link} target="_blank" rel="noopener noreferrer">Открыть товар</a>}
-              <button
-                className="agentProductAlternative"
-                type="button"
-                disabled={loading}
-                aria-label={"Подобрать альтернативу для " + product.title}
-                onClick={() => onRequestAlternative(product)}
-              >
-                Подобрать альтернативу
-              </button>
             </div>
           </article>
         );
@@ -596,14 +582,14 @@ function ChatProducts({ response, loading, onRequestAlternative }: { response: S
   );
 }
 
-function ChatMessageView({ message, loading, onRequestAlternative }: { message: ChatMessage } & ChatProductActions) {
+function ChatMessageView({ message }: { message: ChatMessage }) {
   return (
     <div className={"agentMessage agentMessage-" + message.role}>
       {message.role === "assistant" && <span className="agentAvatar" aria-hidden="true"><SparklesIcon /></span>}
       <div className="agentBubble">
         <p>{message.text}</p>
         {message.response && (message.response.status === "ok" || message.response.status === "partial") && (
-          <ChatProducts response={message.response} loading={loading} onRequestAlternative={onRequestAlternative} />
+          <ChatProducts response={message.response} />
         )}
       </div>
     </div>
@@ -794,12 +780,6 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
     if (!messageText || agentLoading) return;
     setAgentInput("");
     void sendAgentMessage(messageText);
-  }
-
-  function requestAlternative(product: Product) {
-    const article = product.sku?.trim();
-    const reference = article ? `артикул ${article} (${product.title})` : product.title;
-    void sendAgentMessage(`Подбери замену для товара: ${reference}`);
   }
 
   async function sendAgentMessage(messageText: string) {
@@ -1118,12 +1098,7 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
             </header>
             <div className="agentConversation" role="log" aria-live="polite" aria-relevant="additions text" ref={conversationRef}>
               {agentMessages.map((message) => (
-                <ChatMessageView
-                  key={message.id}
-                  message={message}
-                  loading={agentLoading}
-                  onRequestAlternative={requestAlternative}
-                />
+                <ChatMessageView key={message.id} message={message} />
               ))}
               {agentLoading && (
                 <div className="agentMessage agentMessage-assistant">

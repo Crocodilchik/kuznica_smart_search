@@ -420,26 +420,6 @@ img { display: block; max-width: 100%; }
 .agentProduct .productPrice { margin-bottom: 4px; font-size: 15px; }
 .agentProductNote { display: block; margin: 5px 0; color: var(--store-muted); font-size: 12px; line-height: 1.4; }
 .agentProduct .productLink { min-height: 36px; margin-top: 6px; padding: 5px 10px; font-size: 12px; }
-.agentProductAlternative {
-  display: block;
-  min-height: 36px;
-  margin-top: 6px;
-  padding: 5px 10px;
-  border: 1px solid currentColor;
-  border-radius: 6px;
-  background: #fff;
-  color: var(--store-accent);
-  font-size: 12px;
-  cursor: pointer;
-}
-.agentProductAlternative:hover:not(:disabled) { background: var(--store-accent-soft); }
-.agentProductAlternative:disabled { color: var(--store-muted); cursor: wait; }
-@media (hover: hover) and (pointer: fine) {
-  .agentProduct:not(:hover):not(:focus-within) .agentProductAlternative {
-    opacity: 0;
-    pointer-events: none;
-  }
-}
 .agentEvidence { margin: 3px 0 5px; }
 .agentEvidence summary { color: var(--store-accent); cursor: pointer; font-size: 9px; font-weight: 700; }
 .agentEvidence ul { display: grid; gap: 6px; margin: 6px 0; padding: 0 0 0 13px; }
