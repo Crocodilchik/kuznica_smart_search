@@ -405,6 +405,35 @@ function RecommendationDetails({ recommendation }: { recommendation: Recommendat
 
 function ResultPanel({ response, config }: { response: SearchResponse; config: UIConfig }) {
   const statusLabel = config.status_labels[response.status] ?? "Результат поиска";
+  const relationOnly = response.intent === "alternatives" || response.intent === "complements";
+  const showProducts =
+    response.products.length > 0 &&
+    (!relationOnly || (response.recommendations.length === 0 && response.status === "unavailable"));
+  const productsSection = showProducts && (
+    <div className="resultGroup">
+      <div className="groupHeading"><h3>Товары</h3><span>{response.products.length}</span></div>
+      <div className="searchProductGrid">
+        {response.products.map((product) => (
+          <ProductCard key={product.product_id} product={product} config={config} />
+        ))}
+      </div>
+    </div>
+  );
+  const recommendationsSection = response.recommendations.length > 0 && (
+    <div className="resultGroup">
+      <div className="groupHeading"><h3>Рекомендации</h3><span>{response.recommendations.length}</span></div>
+      <div className="searchProductGrid">
+        {response.recommendations.map((recommendation) => (
+          <ProductCard
+            key={recommendation.anchor_id + "-" + recommendation.product.product_id}
+            product={recommendation.product}
+            recommendation={recommendation}
+            config={config}
+          />
+        ))}
+      </div>
+    </div>
+  );
   return (
     <section className={"searchResultPanel status-" + response.status} aria-live="polite" aria-labelledby="result-heading">
       <div className="resultHeader">
@@ -427,7 +456,7 @@ function ResultPanel({ response, config }: { response: SearchResponse; config: U
           </div>
         </div>
       )}
-      {response.status === "empty" && response.products.length === 0 && response.recommendations.length === 0 && (
+      {response.status === "empty" && !showProducts && response.recommendations.length === 0 && (
         <p className="emptyMessage">Подходящих товаров не найдено. Попробуйте описать задачу иначе.</p>
       )}
       {response.status === "unavailable" && (
@@ -442,30 +471,16 @@ function ResultPanel({ response, config }: { response: SearchResponse; config: U
           <ul>{response.warnings.map((warning, index) => <li key={index + "-" + warning}>{warning}</li>)}</ul>
         </details>
       )}
-      {response.products.length > 0 && (
-        <div className="resultGroup">
-          <div className="groupHeading"><h3>Товары</h3><span>{response.products.length}</span></div>
-          <div className="searchProductGrid">
-            {response.products.map((product) => (
-              <ProductCard key={product.product_id} product={product} config={config} />
-            ))}
-          </div>
-        </div>
-      )}
-      {response.recommendations.length > 0 && (
-        <div className="resultGroup">
-          <div className="groupHeading"><h3>Рекомендации</h3><span>{response.recommendations.length}</span></div>
-          <div className="searchProductGrid">
-            {response.recommendations.map((recommendation) => (
-              <ProductCard
-                key={recommendation.anchor_id + "-" + recommendation.product.product_id}
-                product={recommendation.product}
-                recommendation={recommendation}
-                config={config}
-              />
-            ))}
-          </div>
-        </div>
+      {relationOnly ? (
+        <>
+          {recommendationsSection}
+          {productsSection}
+        </>
+      ) : (
+        <>
+          {productsSection}
+          {recommendationsSection}
+        </>
       )}
       {response.reason_codes.length > 0 && (
         <details className="warningsBlock">
@@ -540,12 +555,8 @@ function getResponseText(response: SearchResponse): string {
   return "Нашёл варианты в каталоге. Посмотрите товары ниже и уточните требования, если нужен более точный подбор.";
 }
 
-type ChatProductActions = {
-  loading: boolean;
-  onRequestAlternative: (product: Product) => void;
-};
-
-function ChatProducts({ response, loading, onRequestAlternative }: { response: SearchResponse } & ChatProductActions) {
+function ChatProducts({ response }: { response: SearchResponse }) {
+  const relationOnly = response.intent === "alternatives" || response.intent === "complements";
   const items = orderChatProducts([
     ...response.recommendations.map((recommendation) => ({
       product: recommendation.product,
@@ -553,12 +564,14 @@ function ChatProducts({ response, loading, onRequestAlternative }: { response: S
       evidence: recommendation.evidence,
       key: recommendation.product.product_id,
     })),
-    ...response.products.map((product) => ({
-      product,
-      note: "",
-      evidence: [],
-      key: product.product_id,
-    })),
+    ...(relationOnly
+      ? []
+      : response.products.map((product) => ({
+          product,
+          note: "",
+          evidence: [] as Evidence[],
+          key: product.product_id,
+        }))),
   ], response.chat_product_ids);
 
   if (items.length === 0) return null;
@@ -587,15 +600,6 @@ function ChatProducts({ response, loading, onRequestAlternative }: { response: S
                 </details>
               )}
               {link && <a className="productLink" href={link} target="_blank" rel="noopener noreferrer">Открыть товар</a>}
-              <button
-                className="agentProductAlternative"
-                type="button"
-                disabled={loading}
-                aria-label={"Подобрать альтернативу для " + product.title}
-                onClick={() => onRequestAlternative(product)}
-              >
-                Подобрать альтернативу
-              </button>
             </div>
           </article>
         );
@@ -604,7 +608,7 @@ function ChatProducts({ response, loading, onRequestAlternative }: { response: S
   );
 }
 
-function ChatMessageView({ message, loading, onRequestAlternative }: { message: ChatMessage } & ChatProductActions) {
+function ChatMessageView({ message }: { message: ChatMessage }) {
   const details = message.response?.product_details;
   const link = safeHttpsUrl(details?.url);
   return (
@@ -632,7 +636,7 @@ function ChatMessageView({ message, loading, onRequestAlternative }: { message: 
         )}
         {message.response && message.response.response_kind !== "product_details" &&
           (message.response.status === "ok" || message.response.status === "partial") && (
-          <ChatProducts response={message.response} loading={loading} onRequestAlternative={onRequestAlternative} />
+          <ChatProducts response={message.response} />
         )}
       </div>
     </div>
@@ -831,12 +835,6 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
     if (!messageText || agentLoading) return;
     setAgentInput("");
     void sendAgentMessage(messageText);
-  }
-
-  function requestAlternative(product: Product) {
-    const article = product.sku?.trim();
-    const reference = article ? `артикул ${article} (${product.title})` : product.title;
-    void sendAgentMessage(`Подбери замену для товара: ${reference}`);
   }
 
   async function sendAgentMessage(messageText: string) {
@@ -1156,12 +1154,7 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
             </header>
             <div className="agentConversation" role="log" aria-live="polite" aria-relevant="additions text" ref={conversationRef}>
               {agentMessages.map((message) => (
-                <ChatMessageView
-                  key={message.id}
-                  message={message}
-                  loading={agentLoading}
-                  onRequestAlternative={requestAlternative}
-                />
+                <ChatMessageView key={message.id} message={message} />
               ))}
               {agentLoading && (
                 <div className="agentMessage agentMessage-assistant">

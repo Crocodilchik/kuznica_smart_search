@@ -47,7 +47,8 @@ def chat_products(response: SearchResponse) -> list[ShownProduct]:
     if response.status not in {"ok", "partial"}:
         return []
     ordered = {}
-    for product in [*(item.product for item in response.recommendations), *response.products]:
+    primary = [] if response.intent in {"alternatives", "complements"} else response.products
+    for product in [*(item.product for item in response.recommendations), *primary]:
         ordered.setdefault(
             product.product_id,
             ShownProduct(

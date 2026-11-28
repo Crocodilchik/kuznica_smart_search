@@ -51,6 +51,8 @@ def test_details_use_chat_order_and_skip_search():
     assert response.product_details.product_id == "r"
     assert response.product_details.url == recommended.url
     assert response.products == []
+    relation = result.model_copy(update={"intent": "alternatives"})
+    assert [item.product_id for item in chat_products(relation)] == ["r"]
 
 
 @pytest.mark.parametrize(

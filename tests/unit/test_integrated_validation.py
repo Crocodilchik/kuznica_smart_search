@@ -426,3 +426,37 @@ def test_catalog_backend_expands_pool_for_product_search_only(monkeypatch):
         )
     )
     assert seen_top_k == [("dense", 100), ("sku", 12)]
+
+
+def test_relation_validation_clears_anchor_and_unrelated_products_after_research():
+    anchor = Product(product_id="mon1", title="Монитор AOC 24B30HM2", category="Мониторы")
+    other = Product(product_id="mon2", title="Монитор AOC 24B30H3", category="Мониторы")
+    cable = Product(product_id="cab1", title="Кабель HDMI", category="Кабели")
+    draft = RecommendationDraft(
+        anchor_id="mon1",
+        product=cable,
+        type="cross_sell",
+        claim="Совместим с товаром «Монитор AOC 24B30HM2».",
+    )
+    confirmed = proof(draft, source_url="https://store.softline.ru/cab1")
+    spec = QuerySpec(
+        raw_query="Что посоветуешь к Монитор AOC 24B30HM2",
+        normalized_query="Монитор AOC 24B30HM2",
+        intent="complements",
+    )
+
+    with_recs = check([anchor, other], spec=spec, drafts=[draft], evidence=[confirmed])
+    assert with_recs.products == []
+    assert [r.product.product_id for r in with_recs.recommendations] == ["cab1"]
+
+    rejected = check(
+        [anchor, other],
+        spec=spec,
+        drafts=[draft],
+        evidence=[proof(draft, status="unknown", source_url="https://store.softline.ru/cab1")],
+    )
+    assert rejected.products == []
+    assert rejected.recommendations == []
+
+    without_research = check([anchor, other], spec=spec, drafts=[draft], evidence=[])
+    assert [p.product_id for p in without_research.products] == ["mon1", "mon2"]

@@ -39,6 +39,21 @@ _FOLLOWUP_MEASURE_RE = re.compile(
     r"^\d+(?:[.,]\d+)?\s*(?:дюйм\w*|\"|''|вт|w|ватт\w*|гб|тб|мб|гц|порт\w*|шт\.?|штук\w*|к|k|тыс\w*|млн\.?|руб\w*|₽)(?:\s+(?:и\s+выше|и\s+больше|и\s+меньше|минимум|максимум|в\s+наличии))?$",
     re.IGNORECASE,
 )
+_CLAIM_ANCHOR_RE = re.compile(r"«([^»]+)»")
+
+
+def _turn_titles(response: SearchResponse) -> list[str]:
+    if response.products:
+        return [product.title for product in response.products[:3]]
+    if response.intent == "complements" and response.recommendations:
+        anchors: list[str] = []
+        for rec in response.recommendations:
+            match = _CLAIM_ANCHOR_RE.search(rec.claim)
+            if match and match.group(1) not in anchors:
+                anchors.append(match.group(1))
+        if anchors:
+            return anchors[:3]
+    return [rec.product.title for rec in response.recommendations[:3]]
 
 
 def is_followup_query(query: str, last_turn: SessionTurn | None) -> bool:
@@ -210,7 +225,15 @@ class RedisSessionStore:
             return None
         if query is not None and not is_followup_query(query, turns[-1]):
             return None
-        return format_context(turns)
+        window = DEFAULT_CONTEXT_WINDOW_ITEMS
+        if (
+            len(turns) >= 2
+            and not turns[-1].top_titles
+            and not turns[-1].clarifying_question
+            and is_followup_query(turns[-1].query, turns[-2])
+        ):
+            window = max(window, 2)
+        return format_context(turns, max_items=window)
 
     async def append_turn(
         self,
@@ -227,7 +250,7 @@ class RedisSessionStore:
             intent=response.intent,
             status=response.status,
             product_count=len(response.products),
-            top_titles=[p.title for p in response.products[:3]],
+            top_titles=_turn_titles(response),
             clarifying_question=response.clarifying_question,
             request_id=response.request_id if response.chat_product_ids else None,
             shown_products=chat_products(response) if response.chat_product_ids else [],

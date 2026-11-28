@@ -402,6 +402,10 @@ def validate(
 
     for product_id in accepted:
         products.pop(product_id, None)
+    if relation and (accepted or evidence):
+        # For complements/alternatives, SearchResponse.products holds the anchor lookup;
+        # once recommendations are researched, returning anchors/similars duplicates or pollutes results.
+        products.clear()
     count = len(accepted) if relation else len(products)
     return ValidationResult(
         products=list(products.values()),
