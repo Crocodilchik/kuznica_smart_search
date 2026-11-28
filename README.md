@@ -6,7 +6,7 @@
 
 ## Единый пайплайн
 
-Ветка локальной интеграции объединяет `module1` (LangGraph, API, UI и события), `module2` (клиент DeepSeek/Ollama), `module-3` (каталог и Qdrant) и `module4` (планирование рекомендаций и проверка источников). Рабочие реализации связаны в [smart_search/backend.py](smart_search/backend.py). Команды ниже выполняются из корня этого репозитория.
+Система объединяет оркестрацию поиска (LangGraph, FastAPI, Next.js UI, Streamlit и события Kafka), LLM-клиент (DeepSeek/Ollama), гибридный поиск по каталогу (SQLite + Qdrant BM25/Dense) и подбор рекомендаций с проверкой совместимости. Все компоненты связаны в [smart_search/backend.py](smart_search/backend.py). Команды ниже выполняются из корня этого репозитория.
 
 1. Установите окружение командой `uv sync --locked --python 3.12`. Для нового клона скопируйте шаблон командой `if (!(Test-Path .env)) { Copy-Item .env.example .env }`. В подготовленной локальной сборке файл уже создан.
 2. В корневом `.env` заполните `DEEPSEEK_API_KEY` и при необходимости `DEEPSEEK_MODEL`. Для Ollama выберите `LLM_PROVIDER=ollama` и укажите доступную модель в `OLLAMA_MODEL`. Переменные процесса имеют приоритет. После изменения настроек перезапустите приложение. [Шаблон параметров](.env.example)
@@ -125,7 +125,7 @@ uv run --locked python -m streamlit run smart_search/interfaces/web.py
 
 ## Запуск в режиме prod
 
-Общие модели и владельцы перечислены в [AGENTS.md](AGENTS.md). Укажите `prod` и имя модуля с реальными поисковыми адаптерами. В форме Streamlit доступны произвольный текст и отправка по Enter.
+Укажите `SMART_SEARCH_MODE=prod` и имя модуля с поисковыми адаптерами (`smart_search.backend`). В форме Streamlit доступны произвольный текст и отправка по Enter.
 
 ```powershell
 $env:SMART_SEARCH_MODE = "prod"
