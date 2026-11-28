@@ -47,7 +47,6 @@ id_dsa
 *.sqlite3-wal
 *.sqlite3-shm
 /kuznica_smart_search.zip
-module2/lit/Mindbox.yml.gz.xml
 *.egg-info/
 /data/raw/*
 !/data/raw/README.md
