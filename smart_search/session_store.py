@@ -21,24 +21,7 @@ _REDIS_ERRORS = (RedisError, OSError, TimeoutError)
 DEFAULT_SESSION_TTL_SECONDS = 86_400  # 24 hours
 DEFAULT_MAX_HISTORY_ITEMS = 200
 DEFAULT_CONTEXT_WINDOW_ITEMS = 1
-DEFAULT_CONTEXT_MAX_CHARS = 500
-
-_FOLLOWUP_START_RE = re.compile(
-    r"^(?:а|и|но|тогда|теперь|ладно|ок(?:ей)?|хорошо|понятно|ясно|ну|давай(?:те)?|лучше|желательно|можно|ещ[её]|или|либо|только|до|от|за|не\s+(?:более|дороже|дешевле|ниже|выше)|в\s+пределах|бюджет\w*|цен[ау]\w*|максимум|минимум|подешевле|дешевле|подороже|дороже|вместо|под|для|на|с|со|без|в\s+наличии)\b|^нет(?=\s*(?:,|давай|лучше|покаж|нуж|мне|$))|^не(?=\s+(?:для|под|на|с|из|в|б/у)\b|\s+[^,]+,\s*а\b)",
-    re.IGNORECASE,
-)
-_FOLLOWUP_ANAPHORA_RE = re.compile(
-    r"\b(?:к\s+нему|к\s+ней|для\s+него|для\s+не[её]|вместо\s+него|вместо\s+не[её]|к\s+этом\w*|от\s+не[её]|этого|такой\s+же|такую\s+же|такие\s+же)\b",
-    re.IGNORECASE,
-)
-_FOLLOWUP_SINGLE_ADJ_RE = re.compile(
-    r"^(?:беспроводн\w+|проводн\w+|игров\w+|офисн\w+|красн\w+|ч[её]рн\w+|бел\w+|сер\w+|российск\w+|отечественн\w+|платинов\w+|золот\w+|бронзов\w+|титанов\w+|rgb|\d+\s*(?:к|k|тыс\w*|руб\w*|₽)?)$",
-    re.IGNORECASE,
-)
-_FOLLOWUP_MEASURE_RE = re.compile(
-    r"^\d+(?:[.,]\d+)?\s*(?:дюйм\w*|\"|''|вт|w|ватт\w*|гб|тб|мб|гц|порт\w*|шт\.?|штук\w*|к|k|тыс\w*|млн\.?|руб\w*|₽)(?:\s+(?:и\s+выше|и\s+больше|и\s+меньше|минимум|максимум|в\s+наличии))?$",
-    re.IGNORECASE,
-)
+DEFAULT_CONTEXT_MAX_CHARS = 800
 _CLAIM_ANCHOR_RE = re.compile(r"«([^»]+)»")
 
 
@@ -54,22 +37,6 @@ def _turn_titles(response: SearchResponse) -> list[str]:
         if anchors:
             return anchors[:3]
     return [rec.product.title for rec in response.recommendations[:3]]
-
-
-def is_followup_query(query: str, last_turn: SessionTurn | None) -> bool:
-    """Return True only when the new query refines or answers the previous turn."""
-    if last_turn is None:
-        return False
-    if last_turn.status == "clarification_needed" or last_turn.clarifying_question:
-        return True
-    cleaned = query.strip()
-    if not cleaned:
-        return False
-    if _FOLLOWUP_START_RE.search(cleaned) or _FOLLOWUP_ANAPHORA_RE.search(cleaned):
-        return True
-    return bool(
-        _FOLLOWUP_SINGLE_ADJ_RE.fullmatch(cleaned) or _FOLLOWUP_MEASURE_RE.fullmatch(cleaned)
-    )
 
 
 class SessionTurn(Contract):
@@ -220,18 +187,13 @@ class RedisSessionStore:
         return matches[0] if len(matches) == 1 else []
 
     async def get_context(self, session_id: str, *, query: str | None = None) -> str | None:
+        # DeepSeek decides semantically whether the new turn continues or switches topics.
+        del query
         turns = await self.get_history(session_id)
         if not turns:
             return None
-        if query is not None and not is_followup_query(query, turns[-1]):
-            return None
         window = DEFAULT_CONTEXT_WINDOW_ITEMS
-        if (
-            len(turns) >= 2
-            and not turns[-1].top_titles
-            and not turns[-1].clarifying_question
-            and is_followup_query(turns[-1].query, turns[-2])
-        ):
+        if len(turns) >= 2 and not turns[-1].top_titles and not turns[-1].clarifying_question:
             window = max(window, 2)
         return format_context(turns, max_items=window)
 

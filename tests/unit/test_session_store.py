@@ -11,7 +11,6 @@ from smart_search.session_store import (
     RedisSessionStore,
     SessionTurn,
     format_context,
-    is_followup_query,
 )
 
 
@@ -97,43 +96,27 @@ async def test_redis_session_store_persists_full_24h_history_and_clears():
 
     ctx = await store.get_context("sess-1")
     assert ctx is not None and "а покажи беспроводную" in ctx and "Мышь беспроводная" in ctx
-    assert await store.get_context("sess-1", query="мышь") is None
+    assert await store.get_context("sess-1", query="мышь") is not None
     assert await store.get_context("sess-1", query="а до 5к?") is not None
 
     assert await store.clear("sess-1") is True
     assert await store.get_history("sess-1") == []
 
 
-def test_is_followup_query_distinguishes_refinements_from_new_products():
-    prev_ok = SessionTurn(
-        timestamp=datetime.now(UTC),
-        query="Антивирь для винды на 50 компов до 100к",
-        status="ok",
-        product_count=12,
+@pytest.mark.asyncio
+async def test_session_context_includes_preceding_turn_when_last_turn_had_no_titles():
+    fake = FakeAsyncRedis()
+    store = RedisSessionStore("redis://fake:6379/0", ttl_seconds=86_400)
+    store._client = fake
+    store._client_url = "redis://fake:6379/0"
+
+    await store.append_turn(
+        "sess-2",
+        "принтер лазерный цветной до 500 рублей",
+        SearchResponse(request_id="r1", status="empty", intent="product_search", products=[]),
     )
-    prev_clarify = SessionTurn(
-        timestamp=datetime.now(UTC),
-        query="вава",
-        status="clarification_needed",
-        product_count=0,
-        clarifying_question="Уточните, что ищете?",
-    )
-    assert is_followup_query("а под Linux?", prev_ok) is True
-    assert is_followup_query("подешевле", prev_ok) is True
-    assert is_followup_query("беспроводную", prev_ok) is True
-    assert is_followup_query("к нему", prev_ok) is True
-    assert is_followup_query("27 дюймов", prev_ok) is True
-    assert is_followup_query("750 ватт", prev_ok) is True
-    assert is_followup_query("нет, давай до 95 тысяч", prev_ok) is True
-    assert is_followup_query("ладно, до 50 тысяч", prev_ok) is True
-    assert is_followup_query("ок, покажи в наличии", prev_ok) is True
-    assert is_followup_query("хорошо, а подешевле", prev_ok) is True
-    assert is_followup_query("не принтер, а сканер до 30 тысяч", prev_ok) is True
-    assert is_followup_query("за 50 тысяч", prev_ok) is True
-    assert is_followup_query("мышь", prev_ok) is False
-    assert is_followup_query("красная клавиатура", prev_ok) is False
-    assert is_followup_query("нетбук", prev_ok) is False
-    assert is_followup_query("мышка", prev_clarify) is True
+    ctx = await store.get_context("sess-2", query="ладно, до 50 тысяч")
+    assert ctx is not None and "принтер лазерный цветной" in ctx
 
 
 @pytest.mark.asyncio
@@ -199,7 +182,7 @@ def test_api_hydrates_previous_context_and_exposes_session_endpoints(prod_backen
             json={"query": "мышь", "session_id": "anon-42"},
         )
         assert r3.status_code == 200
-        assert seen_contexts[-1] is None
+        assert seen_contexts[-1] is not None and "А теперь дешевле" in seen_contexts[-1]
 
         hist = client.get("/v1/sessions/anon-42")
         assert hist.status_code == 200
