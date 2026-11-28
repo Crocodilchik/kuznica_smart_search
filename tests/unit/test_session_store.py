@@ -125,6 +125,11 @@ def test_is_followup_query_distinguishes_refinements_from_new_products():
     assert is_followup_query("27 дюймов", prev_ok) is True
     assert is_followup_query("750 ватт", prev_ok) is True
     assert is_followup_query("нет, давай до 95 тысяч", prev_ok) is True
+    assert is_followup_query("ладно, до 50 тысяч", prev_ok) is True
+    assert is_followup_query("ок, покажи в наличии", prev_ok) is True
+    assert is_followup_query("хорошо, а подешевле", prev_ok) is True
+    assert is_followup_query("не принтер, а сканер до 30 тысяч", prev_ok) is True
+    assert is_followup_query("за 50 тысяч", prev_ok) is True
     assert is_followup_query("мышь", prev_ok) is False
     assert is_followup_query("красная клавиатура", prev_ok) is False
     assert is_followup_query("нетбук", prev_ok) is False
