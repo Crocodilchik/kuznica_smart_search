@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from smart_search.contracts import Product, SearchResponse
+from smart_search.contracts import Product, Recommendation, SearchResponse
 from smart_search.interfaces import api as api_module
 from smart_search.session_store import (
     RedisSessionStore,
@@ -204,3 +204,30 @@ def test_api_hydrates_previous_context_and_exposes_session_endpoints(prod_backen
         cleared = client.delete("/v1/sessions/anon-42")
         assert cleared.status_code == 200 and cleared.json()["cleared"] is True
         assert client.get("/v1/sessions/anon-42").json()["turns"] == []
+
+
+@pytest.mark.asyncio
+async def test_session_store_preserves_complement_anchor_when_products_empty():
+    fake = FakeAsyncRedis()
+    store = RedisSessionStore("redis://fake:6379/0", ttl_seconds=86_400)
+    store._client = fake
+    store._client_url = "redis://fake:6379/0"
+
+    comp_resp = SearchResponse(
+        request_id="r-comp",
+        status="partial",
+        intent="complements",
+        products=[],
+        recommendations=[
+            Recommendation(
+                anchor_id="504964",
+                product=Product(product_id="80456", title="Buro BHP HDMI 2", category="Кабели"),
+                type="cross_sell",
+                claim="Совместим с товаром «Монитор AOC 24B30HM2 23.8-inch черный».",
+            )
+        ],
+    )
+    await store.append_turn("sess-anc", "Монитор AOC 24B30HM2 что посоветуешь", comp_resp)
+    ctx = await store.get_context("sess-anc", query="а аналоги ему до 10к?")
+    assert ctx is not None
+    assert "Монитор AOC 24B30HM2 23.8-inch черный" in ctx
