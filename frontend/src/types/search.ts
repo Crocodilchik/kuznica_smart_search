@@ -5,6 +5,13 @@ export type SearchStatus =
   | "clarification_needed"
   | "unavailable";
 
+export type SearchIntent =
+  | "exact_product"
+  | "product_search"
+  | "alternatives"
+  | "complements"
+  | "solution";
+
 export type Product = {
   product_id: string;
   title: string;
@@ -38,6 +45,7 @@ export type Recommendation = {
 export type SearchResponse = {
   request_id: string;
   status: SearchStatus;
+  intent?: SearchIntent | null;
   products: Product[];
   recommendations: Recommendation[];
   warnings: string[];
