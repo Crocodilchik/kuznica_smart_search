@@ -17,6 +17,7 @@ from smart_search.contracts import (
     QuerySpec,
     RecommendationResult,
     SearchEvent,
+    SearchHit,
     SearchMode,
     SearchParams,
     SearchRequest,
@@ -61,9 +62,15 @@ def _step(state: AgentState, step: str) -> list[str]:
     return [*state.get("steps", []), step]
 
 
-def _merge_search(previous: SearchResult, current: SearchResult) -> SearchResult:
+def _merge_search(
+    previous: SearchResult,
+    current: SearchResult,
+    *,
+    kept_previous_hits: list[SearchHit] | None = None,
+) -> SearchResult:
     hits = {}
-    for hit in [*previous.hits, *current.hits]:
+    base_hits = previous.hits if kept_previous_hits is None else kept_previous_hits
+    for hit in [*base_hits, *current.hits]:
         hits.setdefault(hit.product.product_id, hit)
     return SearchResult(
         hits=[hit.model_copy(update={"rank": rank}) for rank, hit in enumerate(hits.values(), 1)],
@@ -180,12 +187,8 @@ def build_search(
             )
             answer.reason_codes = ["detail_model_ambiguous"]
             answer.clarifying_question = f"Нашёл несколько предложений: {items}. Укажите артикул."
-        else:
-            answer.reason_codes = ["detail_model_not_identified"]
-            answer.clarifying_question = (
-                "Укажите название или артикул товара, о котором хотите узнать."
-            )
-        return {"details_response": answer}
+            return {"details_response": answer}
+        return {}
 
     def understand(state: AgentState) -> AgentState:
         item = state["request"]
@@ -196,6 +199,16 @@ def build_search(
                 raw_query=item.query, normalized_query=sku, intent="exact_product", sku=sku
             )
             return {"spec": spec, "steps": _step(state, "route:sku")}
+        shown = state.get("shown_products", ())
+        if shown:
+            cards_text = "Показанные карточки: " + "; ".join(
+                f"{idx}. {card.title}" + (f" [sku: {card.sku}]" if card.sku else "")
+                for idx, card in enumerate(shown, 1)
+            )
+            combined_context = (
+                f"{item.previous_context}\n{cards_text}" if item.previous_context else cards_text
+            )
+            item = item.model_copy(update={"previous_context": combined_context})
         try:
             return {"spec": services.understand(item), "steps": _step(state, "understand")}
         except DEPENDENCY_FAILURES:
@@ -233,7 +246,20 @@ def build_search(
             current = current.model_copy(update={"available": False})
         if current.diagnostics.get("category_hints_applied") is True:
             steps = [*steps, "route:category_hint"]
-        merged = _merge_search(previous, current) if previous is not None else current
+        if previous is not None:
+            # Keep only validated hits (or top anchors on relations) ahead of retry results so
+            # 100 rejected wrong-category hits cannot crowd out fresh retry matches past [:100].
+            if spec.intent in RELATION_BY_INTENT:
+                kept = previous.hits[:3]
+            else:
+                kept_ids = {
+                    product.product_id
+                    for product in state.get("validation", ValidationResult()).products
+                }
+                kept = [hit for hit in previous.hits if hit.product.product_id in kept_ids]
+            merged = _merge_search(previous, current, kept_previous_hits=kept)
+        else:
+            merged = current
         return {"search_result": merged, "steps": [*steps, f"search:{mode}"]}
 
     def validate_primary(state: AgentState) -> AgentState:

@@ -248,3 +248,36 @@ def test_supervisor_uses_deepseek_search_mode_and_relaxes_dense_threshold_on_ret
     assert all(c.query_spec.hard_filters == constraints for c in calls)
     assert "route:threshold_fallback" in response.steps
     assert "route:hybrid_fallback" in response.steps
+
+
+def test_retry_excludes_rejected_wrong_category_hits_ahead_of_fallback_results():
+    seen_batches = []
+
+    def understand(item):
+        return QuerySpec(
+            raw_query=item.query,
+            normalized_query="коврик для мыши",
+            category_hints=["82833"],
+        )
+
+    def search(params):
+        if params.query_spec.category_hints:
+            return SearchResult(
+                hits=products(*(f"wrong-{i}" for i in range(100))),
+                diagnostics={"category_hints_applied": True},
+            )
+        return SearchResult(
+            hits=products("target-pad"), diagnostics={"category_hints_applied": False}
+        )
+
+    def validate(spec, results, recommendations, evidence):
+        seen_batches.append([hit.product.product_id for hit in results.hits])
+        return ValidationResult(
+            products=[hit.product for hit in results.hits if hit.product.product_id == "target-pad"]
+        )
+
+    runner = build_search(demo_services(understand=understand, search=search, validate=validate))
+    response = runner(request("Коврик для мыши"))
+    assert response.retry_count == 1
+    assert [item.product_id for item in response.products] == ["target-pad"]
+    assert seen_batches[1] == ["target-pad"]

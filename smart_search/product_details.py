@@ -23,13 +23,20 @@ _POSITION = re.compile(
     r"(?:\s+(?:вариант|товар|модел|позиц)\w*)?)"
 )
 _DETAILS = re.compile(
-    r"^(?:а\s+)?(?:расскажи(?:те)?(?:\s+пожалуйста)?(?:\s+поподробнее|\s+подробнее)?"
-    r"|(?:покажи(?:те)?|можно)\s+(?:подробности|подробнее)"
-    r"|поподробнее|подробнее|что\s+за)"
-    r"(?:\s+(?:про|о(?:бо?)?|насч[её]т))?(?:\s+|$)",
+    r"^(?:а\s+)?(?:"
+    r"расскажи(?:те)?(?:\s+пожалуйста)?(?:"
+    r"\s+(?:поподробнее|подробнее)(?:\s+(?:про|о(?:бо?)?|насч[её]т))?"
+    r"|\s+(?:про|о(?:бо?)?|насч[её]т)"
+    r")"
+    r"|(?:покажи(?:те)?|можно)\s+(?:подробности|подробнее)(?:\s+(?:про|о(?:бо?)?|насч[её]т))?"
+    r"|(?:поподробнее|подробнее|что\s+за)(?:\s+(?:про|о(?:бо?)?|насч[её]т))?"
+    r")(?:\s+|$)",
     re.IGNORECASE,
 )
+_TRAILING_DETAILS = re.compile(r"\s+(?:поподробнее|подробнее)$", re.IGNORECASE)
 _SKU = re.compile(r"(?:артикул\w*|sku)\s*[:№#]?\s*([\w./-]+)", re.IGNORECASE)
+_LEADING_INDEX = re.compile(r"^\d+[.)]\s+")
+_TRAILING_SKU = re.compile(r"\(([^()]{3,})\)\s*$")
 _FACTS = (
     "Интерфейс",
     "Тип подключения",
@@ -91,16 +98,22 @@ def parse_reference(
     if prefix is None and not allow_short:
         return None
     target = text[prefix.end() :].strip(" «»\"'") if prefix else text
+    target = _LEADING_INDEX.sub("", target).strip()
+    if prefix:
+        target = _TRAILING_DETAILS.sub("", target).strip()
     position = _POSITION.fullmatch(target.casefold().replace("ё", "е"))
     if position and (prefix or not target.isdecimal()):
         number = next((part for part in position.groups()[:3] if part), None)
         return int(number) if number is not None else _ORDINALS[position[4]]
     if prefix and (sku := _SKU.fullmatch(target)):
         return ProductDetailsTarget(kind="sku", value=sku[1])
+    trailing = _TRAILING_SKU.search(target)
+    trailing_sku = sku_key(trailing.group(1)) if trailing else ""
     matches = [
         card
         for card in shown
-        if (card.sku and sku_key(target) == sku_key(card.sku)) or matches_name(target, card)
+        if (card.sku and sku_key(card.sku) in {sku_key(target), trailing_sku})
+        or matches_name(target, card)
     ]
     if len(matches) == 1:
         return ProductDetailsTarget(kind="id", value=matches[0].product_id)

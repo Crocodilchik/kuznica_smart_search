@@ -60,9 +60,11 @@ def test_details_use_chat_order_and_skip_search():
     [
         ("Подробнее про №2", 2),
         ("Расскажи о третьем варианте", 3),
+        ("расскажи про второй вариант поподробнее", 2),
         ("подробнее о четвёртом", 4),
         ("А беспроводную до 5000?", None),
         ("Подбери замену первому", None),
+        ("расскажи анекдот про программистов", None),
     ],
 )
 def test_route_does_not_capture_purchase_refinements(query, expected):
@@ -107,3 +109,81 @@ def test_named_model_can_resolve_outside_chat():
     )(SearchRequest(query="Расскажи подробнее про Logitech M190"))
     assert result.status == "ok"
     assert "details:by_name" in result.steps
+
+
+def test_copied_numbered_card_title_resolves_directly_to_shown_details():
+    pad = Product(
+        product_id="493337",
+        sku="CS-MPC-P07XS",
+        title="Коврик для мыши Cactus Owl blue 220x180x2мм (CS-MPC-P07XS)",
+        category="Прочие аксессуары",
+        brand="Cactus",
+        description="Коврик для компьютерной мыши Cactus Owl 220x180x2мм.",
+        url="https://store.softline.ru/cactus/cs-mpc-p07xs-493337/",
+    )
+    shown = chat_products(SearchResponse(request_id="prev", status="ok", products=[pad]))
+
+    def unexpected(*_args):
+        raise AssertionError("Copied shown card must resolve without search")
+
+    runner = build_search(
+        demo_services(
+            understand=unexpected,
+            search=unexpected,
+            get_product_details=lambda target: ProductDetailsResult(
+                candidates=[pad] if target.value == "493337" else []
+            ),
+        )
+    )
+    response = runner(
+        SearchRequest(
+            query="3. Коврик для мыши Cactus Owl blue 220x180x2мм (CS-MPC-P07XS)",
+            channel="chat",
+        ),
+        shown_products=shown,
+    )
+    assert response.status == "ok"
+    assert response.response_kind == "product_details"
+    assert response.product_details.product_id == "493337"
+
+
+def test_unmatched_details_phrase_falls_through_to_understand():
+    from smart_search.contracts import QuerySpec, SearchHit, SearchResult
+
+    pad = Product(
+        product_id="493337",
+        sku="CS-MPC-P07XS",
+        title="Коврик для мыши Cactus Owl blue 220x180x2мм (CS-MPC-P07XS)",
+        category="Прочие аксессуары",
+    )
+    shown = chat_products(SearchResponse(request_id="prev", status="ok", products=[pad]))
+    seen_contexts: list[str] = []
+
+    def capture_understand(request: SearchRequest) -> QuerySpec:
+        seen_contexts.append(request.previous_context or "")
+        return QuerySpec(
+            raw_query=request.query,
+            normalized_query="Cactus Owl blue",
+            intent="exact_product",
+            sku="CS-MPC-P07XS",
+        )
+
+    runner = build_search(
+        demo_services(
+            understand=capture_understand,
+            search=lambda params: SearchResult(hits=[SearchHit(product=pad, rank=1)]),
+            get_product_details=lambda target: ProductDetailsResult(candidates=[]),
+        )
+    )
+    response = runner(
+        SearchRequest(
+            query="расскажи подробнее про тот синий коврик совой",
+            channel="chat",
+        ),
+        shown_products=shown,
+    )
+    assert response.status == "ok"
+    assert response.response_kind == "search"
+    assert [item.product_id for item in response.products] == ["493337"]
+    assert seen_contexts and "Показанные карточки:" in seen_contexts[0]
+    assert "CS-MPC-P07XS" in seen_contexts[0]
