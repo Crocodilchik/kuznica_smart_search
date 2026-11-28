@@ -12,7 +12,8 @@ from typing import Any
 from pydantic import Field, ValidationError
 from redis.exceptions import RedisError
 
-from smart_search.contracts import Contract, Intent, SearchResponse, SearchStatus
+from smart_search.contracts import Contract, Intent, SearchResponse, SearchStatus, ShownProduct
+from smart_search.product_details import chat_products
 
 LOGGER = logging.getLogger(__name__)
 _REDIS_ERRORS = (RedisError, OSError, TimeoutError)
@@ -70,6 +71,11 @@ class SessionHistoryResponse(Contract):
     session_id: str
     ttl_seconds: int = Field(ge=0)
     turns: list[SessionTurn] = Field(default_factory=list)
+
+
+class StoredSessionTurn(SessionTurn):
+    request_id: str | None = None
+    shown_products: list[ShownProduct] = Field(default_factory=list, max_length=3)
 
 
 def _redis_url() -> str:
@@ -168,10 +174,35 @@ class RedisSessionStore:
         turns: list[SessionTurn] = []
         for raw in raw_items:
             try:
-                turns.append(SessionTurn.model_validate_json(raw))
+                turn = StoredSessionTurn.model_validate_json(raw)
+                turns.append(
+                    SessionTurn.model_validate(
+                        turn.model_dump(exclude={"request_id", "shown_products"})
+                    )
+                )
             except (ValidationError, ValueError):
                 LOGGER.debug("Skipping malformed session turn for session_id=%s", session_id)
         return turns
+
+    async def find_chat_snapshot(
+        self, session_id: str, reference_request_id: str
+    ) -> list[ShownProduct]:
+        client = self._get_client()
+        if client is None or not session_id.strip():
+            return []
+        try:
+            raw_items = await client.lrange(_session_key(session_id), -20, -1)
+        except _REDIS_ERRORS as exc:
+            raise ConnectionError("chat_snapshot_unavailable") from exc
+        matches = []
+        for raw in raw_items:
+            try:
+                turn = StoredSessionTurn.model_validate_json(raw)
+            except ValueError:
+                continue
+            if turn.request_id == reference_request_id and turn.shown_products:
+                matches.append(turn.shown_products)
+        return matches[0] if len(matches) == 1 else []
 
     async def get_context(self, session_id: str, *, query: str | None = None) -> str | None:
         turns = await self.get_history(session_id)
@@ -190,7 +221,7 @@ class RedisSessionStore:
         client = self._get_client()
         if client is None or not session_id.strip():
             return
-        turn = SessionTurn(
+        turn = StoredSessionTurn(
             timestamp=datetime.now(UTC),
             query=query,
             intent=response.intent,
@@ -198,6 +229,8 @@ class RedisSessionStore:
             product_count=len(response.products),
             top_titles=[p.title for p in response.products[:3]],
             clarifying_question=response.clarifying_question,
+            request_id=response.request_id if response.chat_product_ids else None,
+            shown_products=chat_products(response) if response.chat_product_ids else [],
         )
         key = _session_key(session_id)
         payload = json.dumps(turn.model_dump(mode="json"), ensure_ascii=False)

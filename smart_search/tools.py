@@ -1,11 +1,14 @@
 """Typed function contract between Supervisor and its search backend."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Protocol
 
 from smart_search.contracts import (
     EvidenceResult,
     Product,
+    ProductDetailsResult,
+    ProductDetailsTarget,
     QuerySpec,
     RecommendationDraft,
     RecommendationResult,
@@ -13,10 +16,19 @@ from smart_search.contracts import (
     SearchRequest,
     SearchResponse,
     SearchResult,
+    ShownProduct,
     ValidationResult,
 )
 
-SearchRunner = Callable[[SearchRequest], SearchResponse]
+
+class SearchRunner(Protocol):
+    def __call__(
+        self,
+        request: SearchRequest,
+        *,
+        shown_products: Sequence[ShownProduct] = (),
+        reference_unavailable: bool = False,
+    ) -> SearchResponse: ...
 
 
 @dataclass(frozen=True)
@@ -32,3 +44,4 @@ class Services:
         Callable[[QuerySpec, list[Product], list[RecommendationDraft]], list[EvidenceResult]] | None
     ) = None
     check_ready: Callable[[], None] | None = None
+    get_product_details: Callable[[ProductDetailsTarget], ProductDetailsResult] | None = None

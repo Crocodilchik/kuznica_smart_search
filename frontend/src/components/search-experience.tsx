@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, PointerEvent } from "react";
+import { orderChatProducts } from "@/lib/chat-products";
 import type { Evidence, Product, Recommendation, SearchResponse, SearchStatus } from "@/types/search";
 
 type UIConfig = {
@@ -521,11 +522,18 @@ function getResponseText(response: SearchResponse): string {
     return response.clarifying_question ?? "Помогу уточнить запрос. Расскажите немного подробнее.";
   }
   if (response.status === "unavailable") {
+    if (response.response_kind === "product_details") {
+      return "Сейчас не удалось открыть карточку товара. Попробуйте ещё раз.";
+    }
     return "Сейчас не удалось связаться с поисковым сервисом. Попробуйте ещё раз немного позже.";
   }
   if (response.status === "empty") {
+    if (response.response_kind === "product_details") {
+      return "Карточка товара не найдена в каталоге. Проверьте артикул или повторите поиск.";
+    }
     return "Пока не нашёл подходящие позиции. Укажите модель купленного товара и уточните, для какой задачи подбираете дополнение.";
   }
+  if (response.response_kind === "product_details") return "";
   if (response.recommendations.length > 0) {
     return "Подготовил рекомендации по вашему запросу. Ниже — подходящие товары и пояснения.";
   }
@@ -538,7 +546,7 @@ type ChatProductActions = {
 };
 
 function ChatProducts({ response, loading, onRequestAlternative }: { response: SearchResponse } & ChatProductActions) {
-  const items = [
+  const items = orderChatProducts([
     ...response.recommendations.map((recommendation) => ({
       product: recommendation.product,
       note: recommendation.claim,
@@ -551,12 +559,12 @@ function ChatProducts({ response, loading, onRequestAlternative }: { response: S
       evidence: [],
       key: product.product_id,
     })),
-  ].filter((item, index, entries) => entries.findIndex((entry) => entry.key === item.key) === index).slice(0, 3);
+  ], response.chat_product_ids);
 
   if (items.length === 0) return null;
   return (
     <div className="agentProducts">
-      {items.map(({ product, note, evidence, key }) => {
+      {items.map(({ product, note, evidence, key }, index) => {
         const link = safeHttpsUrl(product.url);
         const image = findProductImage(product.sku);
         return (
@@ -564,7 +572,7 @@ function ChatProducts({ response, loading, onRequestAlternative }: { response: S
             {image && <img src={image} alt="" loading="lazy" />}
             <div className="agentProductCopy">
               <p className="productByline">{product.brand || product.category}</p>
-              <h4>{product.title}</h4>
+              <h4>{index + 1}. {product.title}</h4>
               <p className="productPrice">{formatPrice(product.price_kopecks)}</p>
               <StockLabel inStock={product.in_stock} />
               {note && <span className="agentProductNote">{note}</span>}
@@ -597,12 +605,33 @@ function ChatProducts({ response, loading, onRequestAlternative }: { response: S
 }
 
 function ChatMessageView({ message, loading, onRequestAlternative }: { message: ChatMessage } & ChatProductActions) {
+  const details = message.response?.product_details;
+  const link = safeHttpsUrl(details?.url);
   return (
     <div className={"agentMessage agentMessage-" + message.role}>
       {message.role === "assistant" && <span className="agentAvatar" aria-hidden="true"><SparklesIcon /></span>}
       <div className="agentBubble">
-        <p>{message.text}</p>
-        {message.response && (message.response.status === "ok" || message.response.status === "partial") && (
+        {message.text && <p>{message.text}</p>}
+        {details && (
+          <section className="agentProductDetails">
+            <h4>{details.title}</h4>
+            {details.sku && <p>Артикул {details.sku}</p>}
+            {details.summary && <p>{details.summary}</p>}
+            {details.facts.length > 0 && (
+              <dl>{details.facts.map(({ label, value }) => (
+                <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
+              ))}</dl>
+            )}
+            {!details.summary && details.facts.length === 0 && <p>В каталоге нет подробного описания.</p>}
+            {details.price_kopecks != null && <p>{formatPrice(details.price_kopecks)}</p>}
+            {details.in_stock != null && <StockLabel inStock={details.in_stock} />}
+            {link
+              ? <a className="productLink" href={link} target="_blank" rel="noopener noreferrer">Открыть товар</a>
+              : <p>Ссылка на товар отсутствует в каталоге.</p>}
+          </section>
+        )}
+        {message.response && message.response.response_kind !== "product_details" &&
+          (message.response.status === "ok" || message.response.status === "partial") && (
           <ChatProducts response={message.response} loading={loading} onRequestAlternative={onRequestAlternative} />
         )}
       </div>
@@ -634,6 +663,7 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
   const [agentInput, setAgentInput] = useState("");
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentContext, setAgentContext] = useState<string | null>(null);
+  const [agentReference, setAgentReference] = useState<string | null>(null);
   const agentInputRef = useRef<HTMLInputElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   const [agentMessages, setAgentMessages] = useState<ChatMessage[]>([
@@ -737,7 +767,12 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
     };
   }, [agentOpen]);
 
-  async function callSearch(queryText: string, context: string | null): Promise<SearchResponse> {
+  async function callSearch(
+    queryText: string,
+    context: string | null,
+    channel: "chat" | "search",
+    reference: string | null = null,
+  ): Promise<SearchResponse> {
     const activeSessionId = sessionId || getSessionId();
     if (!sessionId) setSessionId(activeSessionId);
     const result = await fetch("/api/search", {
@@ -748,6 +783,8 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
         request_id: window.crypto.randomUUID(),
         session_id: activeSessionId,
         previous_context: context,
+        channel,
+        ...(reference && { reference_request_id: reference }),
       }),
     });
     const data: unknown = await result.json().catch(() => null);
@@ -778,7 +815,7 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
 
     setLoading(true);
     try {
-      const result = await callSearch(trimmedQuery, previousContext);
+      const result = await callSearch(trimmedQuery, previousContext, "search");
       setResponse(result);
       setPreviousContext(result.status === "clarification_needed" ? trimmedQuery : null);
     } catch (error) {
@@ -812,15 +849,16 @@ export default function SearchExperience({ config }: SearchExperienceProps) {
     }]);
     setAgentLoading(true);
     try {
-      const result = await callSearch(messageText, agentContext);
+      const result = await callSearch(messageText, agentContext, "chat", agentReference);
       setAgentMessages((messages) => [...messages, {
         id: window.crypto.randomUUID(),
         role: "assistant",
         text: getResponseText(result),
         response: result,
       }]);
-      if (result.status !== "unavailable") {
+      if (result.response_kind !== "product_details" && result.status !== "unavailable") {
         setAgentContext([agentContext, messageText].filter(Boolean).join("\n").slice(-1000));
+        if (result.chat_product_ids?.length) setAgentReference(result.request_id);
       }
     } catch (error) {
       setAgentMessages((messages) => [...messages, {

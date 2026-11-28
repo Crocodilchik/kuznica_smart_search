@@ -66,6 +66,16 @@ def _render_results(response: SearchResponse, config: UIConfig, *, show_trace: b
     st.subheader(_escape(config.status_labels[response.status]))
     if response.clarifying_question:
         st.info(_escape(response.clarifying_question))
+    if details := response.product_details:
+        st.text(details.title)
+        if details.summary:
+            st.text(details.summary)
+        for fact in details.facts:
+            st.text(f"{fact.label}: {fact.value}")
+        if url := _https(details.url):
+            st.link_button("Открыть карточку Softline", url)
+        else:
+            st.info("Ссылка на товар отсутствует в каталоге.")
     if response.warnings and response.status != "unavailable":
         st.warning("Часть данных могла быть недоступна при поиске.")
     if response.products:

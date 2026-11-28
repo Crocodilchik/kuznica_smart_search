@@ -10,7 +10,17 @@ from threading import RLock
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
-from smart_search.contracts import SearchHit, SearchParams, SearchResult
+from smart_search.contracts import (
+    Product,
+    ProductDetailsResult,
+    ProductDetailsTarget,
+    QuerySpec,
+    SearchHit,
+    SearchParams,
+    SearchResult,
+)
+from smart_search.product_details import matches_name
+from softline_search.catalog import Catalog
 from softline_search.contracts import SearchParams as CatalogParams
 from softline_search.contracts import SearchResult as CatalogResult
 from softline_search.retrieval import FastEmbedEncoder
@@ -137,6 +147,51 @@ def close() -> None:
         if _engine.cache_info().currsize:
             _engine().close()
         _engine.cache_clear()
+        _details_catalog.cache_clear()
+
+
+@cache
+def _details_catalog(directory: str) -> Catalog:
+    return Catalog(directory)
+
+
+def get_product_details(target: ProductDetailsTarget) -> ProductDetailsResult:
+    try:
+        catalog = _details_catalog(os.getenv("SOFTLINE_CATALOG_DIR", "data/catalog"))
+        if target.kind == "id":
+            product = catalog.get_product(target.value)
+            candidates = [product] if product else []
+        else:
+            candidates = catalog.by_sku(target.value)
+            if not candidates and target.kind == "name":
+                results = search(
+                    SearchParams(
+                        query_spec=QuerySpec(
+                            raw_query=target.value,
+                            normalized_query=target.value,
+                            intent="exact_product",
+                        ),
+                        mode="bm25",
+                        top_k=12,
+                    )
+                )
+                if not results.available:
+                    raise ConnectionError("detail_name_lookup_unavailable")
+                matches = [
+                    hit.product.product_id
+                    for hit in results.hits
+                    if matches_name(target.value, hit.product)
+                ]
+                candidates = [
+                    product
+                    for key in dict.fromkeys(matches)
+                    if (product := catalog.get_product(key)) is not None
+                ]
+        return ProductDetailsResult(
+            candidates=[Product.model_validate(card.model_dump()) for card in candidates[:3]]
+        )
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise ConnectionError("detail_catalog_unavailable") from exc
 
 
 def search_rich(params: CatalogParams | dict) -> CatalogResult:

@@ -417,6 +417,10 @@ img { display: block; max-width: 100%; }
 .agentProduct img { width: 42px; height: 42px; object-fit: contain; }
 .agentProductCopy { min-width: 0; overflow-wrap: anywhere; }
 .agentProduct h4 { margin: 0 0 5px; font-size: 13px; line-height: 1.35; font-weight: 400; }
+.agentProductDetails { display: grid; gap: 7px; overflow-wrap: anywhere; }
+.agentProductDetails h4, .agentProductDetails dl, .agentProductDetails dd { margin: 0; }
+.agentProductDetails dt { font-weight: 600; }
+.agentProductDetails .productLink { justify-self: start; }
 .agentProduct .productPrice { margin-bottom: 4px; font-size: 15px; }
 .agentProductNote { display: block; margin: 5px 0; color: var(--store-muted); font-size: 12px; line-height: 1.4; }
 .agentProduct .productLink { min-height: 36px; margin-top: 6px; padding: 5px 10px; font-size: 12px; }

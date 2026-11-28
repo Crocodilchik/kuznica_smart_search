@@ -43,6 +43,18 @@ export type SearchResponse = {
   warnings: string[];
   reason_codes: string[];
   clarifying_question?: string | null;
+  response_kind?: "search" | "product_details";
+  chat_product_ids?: string[] | null;
+  product_details?: {
+    product_id: string;
+    title: string;
+    sku?: string | null;
+    summary?: string | null;
+    facts: { label: string; value: string }[];
+    url?: string | null;
+    price_kopecks?: number | null;
+    in_stock?: boolean | null;
+  } | null;
 };
 
 export type ApiError = {

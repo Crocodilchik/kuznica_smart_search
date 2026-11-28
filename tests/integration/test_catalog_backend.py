@@ -3,7 +3,7 @@ import json
 import pytest
 
 from smart_search import catalog_backend
-from smart_search.contracts import HardFilters, QuerySpec, SearchParams
+from smart_search.contracts import HardFilters, ProductDetailsTarget, QuerySpec, SearchParams
 from softline_search.catalog import Catalog, build_catalog
 from softline_search.retrieval import build_index
 
@@ -70,6 +70,20 @@ def test_missing_index_and_missing_catalog_report_unavailable(catalog_paths, mon
     catalog_backend.close()
     monkeypatch.setenv("SOFTLINE_CATALOG_DIR", str(catalog.parent / "missing"))
     assert not catalog_backend.search(params("AV-25/X", "sku")).available
+
+
+def test_details_by_id_and_sku_do_not_open_qdrant(catalog_paths, monkeypatch):
+    def unavailable():
+        raise AssertionError("Catalog details must not initialize the retrieval engine")
+
+    with monkeypatch.context() as isolated:
+        isolated.setattr(catalog_backend, "_engine", unavailable)
+        by_id = catalog_backend.get_product_details(ProductDetailsTarget(kind="id", value="100"))
+        by_sku = catalog_backend.get_product_details(
+            ProductDetailsTarget(kind="sku", value="av-25/x")
+        )
+        assert by_id.candidates == by_sku.candidates
+        assert by_id.candidates[0].description.startswith("Платформа: Windows")
 
 
 def test_bm25_only_hybrid_is_searchable_and_reports_degradation(catalog_paths):

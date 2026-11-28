@@ -54,7 +54,8 @@ class FakeAsyncRedis:
         return FakePipeline(self)
 
     async def lrange(self, key: str, start: int, end: int):
-        return list(self.lists.get(key, []))
+        items = self.lists.get(key, [])
+        return items[start:] if end == -1 else items[start : end + 1]
 
     async def delete(self, key: str):
         existed = key in self.lists
@@ -204,3 +205,48 @@ def test_api_hydrates_previous_context_and_exposes_session_endpoints(prod_backen
         cleared = client.delete("/v1/sessions/anon-42")
         assert cleared.status_code == 200 and cleared.json()["cleared"] is True
         assert client.get("/v1/sessions/anon-42").json()["turns"] == []
+
+
+def test_chat_details_follow_the_referenced_list_without_crossing_sessions(
+    prod_backend, monkeypatch
+):
+    from smart_search.contracts import ProductDetailsResult
+
+    fake = FakeAsyncRedis()
+    store = RedisSessionStore("redis://fake:6379/0")
+    store._client, store._client_url = fake, "redis://fake:6379/0"
+    monkeypatch.setattr(api_module, "session_store", store)
+    calls = []
+
+    def get_details(target):
+        calls.append(target.value)
+        return ProductDetailsResult(
+            candidates=[
+                Product(
+                    product_id=target.value,
+                    title="Монитор для переговорной",
+                    category="мониторы",
+                    description="Монитор для рабочего пространства.",
+                    url="https://store.softline.ru/monitor/",
+                )
+            ]
+        )
+
+    monkeypatch.setattr(prod_backend, "get_product_details", get_details, raising=False)
+    with TestClient(api_module.app) as client:
+        context = {"channel": "chat", "session_id": "a"}
+        listing = client.post("/v1/search", json={**context, "query": "Нужен монитор"}).json()
+        assert listing["chat_product_ids"] == ["catalog-monitor"]
+        query = {
+            **context,
+            "query": "Расскажи подробнее про первый вариант",
+            "reference_request_id": listing["request_id"],
+            "previous_context": "текст из браузера",
+        }
+        details = client.post("/v1/search", json=query).json()
+        assert details["status"] == "ok"
+        assert details["product_details"]["product_id"] == "catalog-monitor"
+        other = client.post("/v1/search", json={**query, "session_id": "b"}).json()
+        assert other["reason_codes"] == ["detail_reference_expired"]
+        assert calls == ["catalog-monitor"]
+        assert len(client.get("/v1/sessions/a").json()["turns"]) == 1

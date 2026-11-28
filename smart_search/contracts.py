@@ -28,6 +28,11 @@ class SearchRequest(Contract):
     request_id: NonEmptyText = Field(default_factory=lambda: str(uuid4()))
     session_id: str | None = None
     previous_context: str | None = None
+    channel: Literal["chat", "search"] | None = None
+    reference_request_id: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
+        | None
+    ) = None
 
 
 class HardFilters(Contract):
@@ -162,6 +167,35 @@ class ValidationResult(Contract):
     needs_retry: bool = False
 
 
+class ShownProduct(Contract):
+    product_id: NonEmptyText
+    title: NonEmptyText
+    sku: str | None = None
+    brand: str | None = None
+
+
+class ProductDetailsTarget(Contract):
+    kind: Literal["id", "sku", "name"]
+    value: NonEmptyText
+
+
+class ProductDetailsResult(Contract):
+    candidates: list[Product] = Field(default_factory=list, max_length=3)
+
+
+class ProductFact(Contract):
+    label: NonEmptyText
+    value: NonEmptyText
+
+
+class ProductDetails(ShownProduct):
+    summary: str | None = None
+    facts: list[ProductFact] = Field(default_factory=list, max_length=3)
+    url: str | None = None
+    price_kopecks: Kopecks | None = None
+    in_stock: bool | None = None
+
+
 class SearchResponse(Contract):
     request_id: NonEmptyText
     status: SearchStatus
@@ -173,6 +207,9 @@ class SearchResponse(Contract):
     intent: Intent | None = None
     retry_count: Annotated[int, Field(ge=0, le=1)] = 0
     steps: list[str] = Field(default_factory=list)
+    response_kind: Literal["search", "product_details"] = "search"
+    product_details: ProductDetails | None = None
+    chat_product_ids: list[NonEmptyText] | None = Field(default=None, max_length=3)
 
 
 class SearchEvent(Contract):

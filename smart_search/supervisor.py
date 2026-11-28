@@ -3,7 +3,7 @@
 import logging
 import re
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from time import perf_counter
 from typing import TypedDict
 
@@ -13,6 +13,7 @@ from smart_search.contracts import (
     EvidenceResult,
     HardFilters,
     Product,
+    ProductDetailsTarget,
     QuerySpec,
     RecommendationResult,
     SearchEvent,
@@ -22,9 +23,11 @@ from smart_search.contracts import (
     SearchResponse,
     SearchResult,
     SearchStatus,
+    ShownProduct,
     ValidationResult,
 )
 from smart_search.events import EventDeliveryError
+from smart_search.product_details import chat_products, make_details, parse_reference
 from smart_search.tools import SearchRunner, Services
 
 LOGGER = logging.getLogger(__name__)
@@ -49,6 +52,9 @@ class AgentState(TypedDict, total=False):
     retry_count: int
     warnings: list[str]
     steps: list[str]
+    shown_products: Sequence[ShownProduct]
+    reference_unavailable: bool
+    details_response: SearchResponse
 
 
 def _step(state: AgentState, step: str) -> list[str]:
@@ -112,6 +118,74 @@ def build_search(
     search_mode: SearchMode = "hybrid",
 ) -> SearchRunner:
     """Compile the workflow once and return a synchronous request handler."""
+
+    def route_details(state: AgentState) -> AgentState:
+        request = state["request"]
+        shown = state.get("shown_products", ())
+        reference = parse_reference(request.query, shown, allow_short=request.channel == "chat")
+        if reference is None:
+            return {}
+        answer = SearchResponse(
+            request_id=request.request_id,
+            status="clarification_needed",
+            response_kind="product_details",
+            steps=["route:product_details"],
+        )
+        if isinstance(reference, int):
+            if state.get("reference_unavailable"):
+                answer.status = "unavailable"
+                answer.reason_codes = ["detail_session_unavailable"]
+                return {"details_response": answer}
+            if not 1 <= reference <= len(shown):
+                answer.reason_codes = [
+                    "detail_position_invalid" if shown else "detail_reference_expired"
+                ]
+                answer.clarifying_question = (
+                    f"В списке {len(shown)} поз. Укажите номер показанной карточки."
+                    if shown
+                    else "Список товаров недоступен. Назовите модель или артикул."
+                )
+                return {"details_response": answer}
+            reference = ProductDetailsTarget(kind="id", value=shown[reference - 1].product_id)
+        if isinstance(reference, list):
+            selected = reference
+        elif services.get_product_details is None:
+            answer.status = "unavailable"
+            answer.reason_codes = ["detail_tool_unavailable"]
+            return {"details_response": answer}
+        else:
+            answer.steps.append(f"details:by_{reference.kind}")
+            try:
+                selected = services.get_product_details(reference).candidates
+            except DEPENDENCY_FAILURES:
+                answer.status = "unavailable"
+                answer.reason_codes = ["detail_catalog_unavailable"]
+                return {"details_response": answer}
+            if len(selected) == 1:
+                answer.product_details = make_details(selected[0])
+                if not answer.product_details.url:
+                    answer.reason_codes.append("detail_link_missing")
+                if not (answer.product_details.summary or answer.product_details.facts):
+                    answer.reason_codes.append("detail_description_missing")
+                answer.status = "partial" if answer.reason_codes else "ok"
+                return {"details_response": answer}
+            if not selected and reference.kind in {"id", "sku"}:
+                answer.status = "empty"
+                answer.reason_codes = ["detail_product_not_found"]
+                return {"details_response": answer}
+        if selected:
+            items = "; ".join(
+                f"{card.title} (артикул {card.sku})" if card.sku else card.title
+                for card in selected
+            )
+            answer.reason_codes = ["detail_model_ambiguous"]
+            answer.clarifying_question = f"Нашёл несколько предложений: {items}. Укажите артикул."
+        else:
+            answer.reason_codes = ["detail_model_not_identified"]
+            answer.clarifying_question = (
+                "Укажите название или артикул товара, о котором хотите узнать."
+            )
+        return {"details_response": answer}
 
     def understand(state: AgentState) -> AgentState:
         item = state["request"]
@@ -265,6 +339,7 @@ def build_search(
         return {"retry_count": 1, "steps": _step(state, "retry")}
 
     graph = StateGraph(AgentState)
+    graph.add_node("route_details", route_details)
     graph.add_node("understand", understand)
     graph.add_node("search", search)
     graph.add_node("validate_primary", validate_primary)
@@ -272,7 +347,12 @@ def build_search(
     graph.add_node("research", research)
     graph.add_node("validate_recommendations", validate_recommendations)
     graph.add_node("retry", retry)
-    graph.add_edge(START, "understand")
+    graph.add_edge(START, "route_details")
+    graph.add_conditional_edges(
+        "route_details",
+        lambda state: "done" if "details_response" in state else "understand",
+        {"understand": "understand", "done": END},
+    )
     graph.add_conditional_edges("understand", after_understand, {"search": "search", "done": END})
     graph.add_edge("search", "validate_primary")
     graph.add_conditional_edges(
@@ -288,9 +368,30 @@ def build_search(
     graph.add_edge("retry", "search")
     compiled = graph.compile()
 
-    def run(request: SearchRequest) -> SearchResponse:
+    def run(
+        request: SearchRequest,
+        *,
+        shown_products: Sequence[ShownProduct] = (),
+        reference_unavailable: bool = False,
+    ) -> SearchResponse:
         start = perf_counter()
-        state = compiled.invoke({"request": request, "retry_count": 0})
+        state = compiled.invoke(
+            {
+                "request": request,
+                "retry_count": 0,
+                "shown_products": shown_products,
+                "reference_unavailable": reference_unavailable,
+            }
+        )
+        if details := state.get("details_response"):
+            LOGGER.info(
+                "product_details.completed status=%s step=%s reason=%s latency_ms=%.1f",
+                details.status,
+                details.steps[-1],
+                ",".join(details.reason_codes),
+                (perf_counter() - start) * 1000,
+            )
+            return details
         spec = state.get("spec")
         validation = state.get("validation", ValidationResult())
         recommendation_result = state.get("recommendation_result", RecommendationResult())
@@ -320,6 +421,8 @@ def build_search(
             retry_count=state["retry_count"],
             steps=state.get("steps", []),
         )
+        if request.channel == "chat":
+            response.chat_product_ids = [item.product_id for item in chat_products(response)]
         if record_event is not None:
             try:
                 record_event(

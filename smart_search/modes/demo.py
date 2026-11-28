@@ -11,6 +11,8 @@ from smart_search.contracts import (
     EvidenceResult,
     HardFilters,
     Product,
+    ProductDetailsResult,
+    ProductDetailsTarget,
     QuerySpec,
     Recommendation,
     RecommendationDraft,
@@ -376,8 +378,28 @@ def validate_demo(
     )
 
 
+def get_product_details_demo(target: ProductDetailsTarget) -> ProductDetailsResult:
+    from smart_search.product_details import matches_name
+    from softline_search.text import sku_key
+
+    if target.kind == "id":
+        product = OFFERS.get(target.value)
+        return ProductDetailsResult(candidates=[product] if product else [])
+    candidates = [card for card in CATALOG if sku_key(card.sku) == sku_key(target.value)]
+    if target.kind == "name" and not candidates:
+        candidates = [card for card in CATALOG if matches_name(target.value, card)]
+    return ProductDetailsResult(candidates=candidates[:3])
+
+
 def demo_services(**overrides: Any) -> Services:
     return replace(
-        Services(understand_demo, search_demo, recommend_demo, research_demo, validate_demo),
+        Services(
+            understand_demo,
+            search_demo,
+            recommend_demo,
+            research_demo,
+            validate_demo,
+            get_product_details=get_product_details_demo,
+        ),
         **overrides,
     )
