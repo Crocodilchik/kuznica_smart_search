@@ -146,7 +146,7 @@ def test_deepseek_can_choose_bm25_and_threshold_is_ignored_for_bm25(monkeypatch)
     assert spec.normalized_query == "КриптоПро CSP 5.0"
 
 
-def test_deepseek_constraints_override_regex_while_missing_fields_backfill(monkeypatch):
+def test_deepseek_controls_constraints_without_regex_backfill(monkeypatch):
     def complete(system_prompt, user_prompt, schema):
         return schema.model_validate(
             {
@@ -168,7 +168,7 @@ def test_deepseek_constraints_override_regex_while_missing_fields_backfill(monke
     assert spec.raw_query == request.query
     assert spec.category is None
     assert spec.hard_filters.min_total_price_kopecks == 200000
-    assert spec.hard_filters.max_total_price_kopecks == 900000
+    assert spec.hard_filters.max_total_price_kopecks is None
     assert not spec.warnings
 
 
@@ -259,3 +259,10 @@ def test_correction_negation_ignores_stale_budget_and_resolves_llm_category_hint
     assert spec.category is None
     assert spec.category_hints == ["94641"]
     assert spec.hard_filters.max_total_price_kopecks == 3_000_000
+
+
+def test_fallback_type_detection_ignores_accessories_for_preposition_nouns():
+    pad_spec = understand(SearchRequest(query="Коврик для мыши Cactus Owl"))
+    assert pad_spec.product_type_hint == "коврик для мыши"
+    bag_spec = understand(SearchRequest(query="Сумка для ноутбука 15.6"))
+    assert bag_spec.product_type_hint is None

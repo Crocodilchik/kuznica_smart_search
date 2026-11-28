@@ -90,6 +90,7 @@ PROMPT = """Ты — главный ИИ-маршрутизатор и инте�
    - убери слова вроде «хочу», «купить», «подскажите», повторы и фразы о цене/бюджете;
    - при исправлении/отрицании вида «не X, а Y» или «вместо X нужен Y» полностью отбрось отменённый товар `X` и формируй `normalized_query`, `product_type_hint` и `category_hints` строго по нужному `Y`;
    - для `intent: "solution"` (составной комплект вида «X, Y и Z» с общим бюджетом) указывай в `normalized_query` и `product_type_hint` основное базовое устройство (`X`), к которому нужно подобрать дополнения (`budget_scope: "bundle"`), чтобы поиск не скатился в аксессуары;
+   - при указании или копировании товара из `previous_context` / показанных карточек (в том числе с номером списка вроде «3. Коврик для мыши ... (SKU)» или по описанию «синий коврик совой») убери лишний номер списка, а если спрашивают именно про этот конкретный показанный товар — ставь `intent: "exact_product"` и его `sku` (если `sku` явно присутствует в `previous_context` или `request`) либо точное название в `normalized_query`;
    - обязательно сохраняй точные названия моделей, бренды, версии с точками (5.0, 1.8, 2024) и важные характеристики (27 дюймов, 1920×1080, RGB, 750W).
 4. Самостоятельно выбери поисковый инструмент в `search_mode`:
    - "sku" — только если пользователь указал конкретный артикул (тогда скопируй его в `sku` дословно из текста).
@@ -105,7 +106,7 @@ PROMPT = """Ты — главный ИИ-маршрутизатор и инте�
    Для "alternatives" и "complements" в `normalized_query` укажи исходный товар, относительно которого ищутся аналоги/дополнения.
 6. Для выбора категорий опирайся ТОЛЬКО на список активных категорий каталога в конце инструкции (если он передан):
    - оставляй `category: null`, чтобы не отрезать смежные разделы жёстким фильтром;
-   - в `category_hints` выбери от 1 до 4 подходящих `category_id` из списка для конкретного типа товара (или `[]`, если подходящих нет или запрос слишком общий);
+   - в `category_hints` выбери от 1 до 3 подходящих `category_id` из списка для конкретного типа товара (или `[]`, если подходящих нет или запрос слишком общий);
    - в `product_type_hint` укажи канонический тип товара («мышь», «клавиатура», «монитор», «сервер», «ноутбук», «ИБП», «сканер», «принтер», «антивирус», «операционная система» и т.п.), иначе `null`;
    - `required_terms`: список обязательных характеристик, которые должны быть подтверждены в карточке (например `["RGB"]` при запросе «с ргб»).
 7. Извлеки ограничения в `hard_filters` (все денежные суммы ЦЕЛЫМИ ЧИСЛАМИ В КОПЕЙКАХ, т.е. рубли * 100):
@@ -220,8 +221,16 @@ def _prices(pattern: re.Pattern, text: str) -> list[re.Match]:
 
 
 def _detect_product_type(text: str) -> str | None:
+    if re.search(r"\bковрик\w*\b", text, re.IGNORECASE):
+        return "коврик для мыши"
+    if re.search(r"\b(?:сумк\w*|рюкзак\w*|чех[ое]л\w*)\b", text, re.IGNORECASE):
+        return None
     for pattern, label in PRODUCT_TYPE_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            prefix = text[: match.start()]
+            if re.search(r"(?:для|к|под)\s+$", prefix, re.IGNORECASE):
+                continue
             return label
     return None
 
@@ -356,9 +365,9 @@ def _system_prompt() -> str:
 
 
 def understand(request: SearchRequest) -> QuerySpec:
+    # Fast-path explicit standalone SKU queries (direct, replacement, or complement) without LLM latency.
     query_rules = _rules(SearchRequest(query=request.query))
-    # Fast-path explicit SKU (direct lookup, replacement, or complement) without burning an LLM call.
-    if query_rules.sku:
+    if query_rules.sku and not request.previous_context:
         return query_rules
 
     prompt = json.dumps(
@@ -378,15 +387,14 @@ def understand(request: SearchRequest) -> QuerySpec:
                 fallback = fallback.model_copy(update={"category_hints": hints[:4]})
         return fallback.model_copy(update={"warnings": ["understanding_llm_fallback"]})
 
-    # DeepSeek is in charge: only backfill missing fields from the current query itself
-    # (never bleed stale previous_context constraints back in via regex) and guard against fake SKUs.
+    # DeepSeek is in charge: trust its QuerySpec without regex overrides, guarding only fake SKUs
+    # and verifying any suggested catalog categories against SQLite.
     source_text = " ".join(filter(None, [request.previous_context, request.query])).casefold()
     sku = suggestion.sku if suggestion.sku and suggestion.sku.casefold() in source_text else None
     intent = suggestion.intent
     if intent == "exact_product" and not sku:
         intent = "product_search"
 
-    # Never let an unverified category block search; keep category=None unless explicitly verified and requested.
     verified_category = None
     if suggestion.category and not sku:
         ids = resolve_category(suggestion.category)
@@ -401,42 +409,22 @@ def understand(request: SearchRequest) -> QuerySpec:
                 resolved = ids[0] if len(ids) == 1 else hint
                 if resolved not in hints:
                     hints.append(resolved)
-        if not hints and intent == "product_search" and not suggestion.clarifying_question:
-            hints = resolve_type_category_hints(
-                suggestion.product_type_hint or query_rules.product_type_hint
-            )
-
-    if suggestion.clarifying_question:
-        hard = suggestion.hard_filters.model_dump(exclude_none=True)
-        preferences = suggestion.preferences.model_dump(exclude_none=True)
-    else:
-        hard = query_rules.hard_filters.model_dump(
-            exclude_none=True
-        ) | suggestion.hard_filters.model_dump(exclude_none=True)
-        preferences = query_rules.preferences.model_dump(
-            exclude_none=True
-        ) | suggestion.preferences.model_dump(exclude_none=True)
-
-    entity = suggestion.normalized_query
-    versions = re.findall(r"(?<![\w.,])\d+(?:\.\d+)+(?![\w.,])", request.query)
-    if any(version not in entity for version in versions):
-        entity = query_rules.normalized_query or suggestion.normalized_query
 
     search_mode = "sku" if sku else (suggestion.search_mode or "hybrid")
     score_threshold = suggestion.score_threshold if search_mode in {"dense", "hybrid"} else None
 
     return QuerySpec(
         raw_query=request.query,
-        normalized_query=entity,
+        normalized_query=suggestion.normalized_query,
         intent=intent,
         sku=sku,
         category=verified_category,
-        category_hints=hints[:4],
+        category_hints=hints[:3],
         search_mode=search_mode,
         score_threshold=score_threshold,
         product_type_hint=suggestion.product_type_hint,
         required_terms=suggestion.required_terms,
-        hard_filters=HardFilters.model_validate(hard),
-        preferences=Preferences.model_validate(preferences),
+        hard_filters=suggestion.hard_filters,
+        preferences=suggestion.preferences,
         clarifying_question=suggestion.clarifying_question,
     )
