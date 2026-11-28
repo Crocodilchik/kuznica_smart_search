@@ -1,1 +1,168 @@
-Заглушка
+# Умный поиск Softline
+
+Прототип принимает запрос на естественном языке, ищет товары, проверяет ограничения и показывает связанные предложения с основанием. В Streamlit остаётся аналитика по поискам, статусам, причинам недобора и p95.
+
+В чате можно запросить подробности о показанной позиции — например, «Расскажи подробнее про второй вариант» — или явно указать модель либо артикул. Для однозначных совпадений быстрый маршрут читает карточку напрямую из каталога, а свободные или нечёткие уточнения передаются в DeepSeek с контекстом показанных карточек. В ответе отображаются короткое описание, до трёх характеристик и ссылка на товар, если эти данные есть. [Сценарии и устройство инструмента](docs/product-details.md)
+
+## Единый пайплайн
+
+Система объединяет оркестрацию поиска (LangGraph, FastAPI, Next.js UI, Streamlit и события Kafka), LLM-клиент (DeepSeek/Ollama), гибридный поиск по каталогу (SQLite + Qdrant BM25/Dense) и подбор рекомендаций с проверкой совместимости. Все компоненты связаны в [smart_search/backend.py](smart_search/backend.py). Команды ниже выполняются из корня этого репозитория.
+
+1. Установите окружение командой `uv sync --locked --python 3.12`. Для нового клона скопируйте шаблон командой `if (!(Test-Path .env)) { Copy-Item .env.example .env }`. В подготовленной локальной сборке файл уже создан.
+2. В корневом `.env` заполните `DEEPSEEK_API_KEY` и при необходимости `DEEPSEEK_MODEL`. Для Ollama выберите `LLM_PROVIDER=ollama` и укажите доступную модель в `OLLAMA_MODEL`. Переменные процесса имеют приоритет. После изменения настроек перезапустите приложение. [Шаблон параметров](.env.example)
+3. Подготовьте каталог и индекс, если переносите приложение на новую машину или ещё не собирали базу локально. Укажите фактический путь к XML:
+
+   ```powershell
+   uv run --locked python -X utf8 -m softline_search prepare "data/raw/Mindbox.yml.gz.xml" --output data/catalog --reports .local/catalog-reports
+   uv run --locked --env-file .env python -X utf8 -m softline_search index --catalog data/catalog --output data/qdrant
+   ```
+
+4. Для работы через браузер запустите Node.js-фронтенд из `frontend/` (`npm ci`, затем `npm run dev`). Нужен Node.js 24 LTS. В `.env` задайте `SMART_SEARCH_API_URL=http://127.0.0.1:8000`; серверный маршрут Next.js передаст запрос в FastAPI. Для HTTP API используйте `uv run --locked python -m uvicorn smart_search.interfaces.api:app --host 127.0.0.1 --port 8000`. Интерактивная документация доступна по адресу `http://127.0.0.1:8000/docs`. Streamlit остаётся отдельным интерфейсом для демонстрационного режима, аналитики и массовой проверки примеров; для этих экранов в API пока нет контрактов.
+5. Для аналитики укажите адрес брокера в `SMART_SEARCH_KAFKA_BOOTSTRAP_SERVERS` и создайте топик `smart-search.search-events.v1`. При пустом адресе приложение сообщает об ошибке доставки в журнале и возвращает пользователю найденные товары. [Контракт событий](docs/contracts/contract_events_interface.md)
+
+Пример проверки готовности и поиска артикула через API из PowerShell:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health/ready
+$body = @{ query = "Артикул: AL16-03SWS701-0100" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/v1/search -ContentType "application/json; charset=utf-8" -Body ([Text.Encoding]::UTF8.GetBytes($body))
+```
+
+### Поиск и модели
+
+Qdrant — поисковый движок нашего каталога. В Docker он хранит готовый индекс **136 040** предложений: полнотекстовый **BM25** (`lexical_text`) и 384-мерные векторные эмбеддинги (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, кэш весов в `FASTEMBED_CACHE_PATH`). Qdrant работает отдельно от API (`http://qdrant:6333`), поэтому при перезапуске приложения индекс строить заново не нужно. Точные артикулы по-прежнему ищутся напрямую в SQLite (`catalog.sqlite`).
+
+DeepSeek разбирает запрос пользователя (опечатки, сленг, ограничения по ОС, стране, количеству устройств и минимальному/максимальному бюджету) и самостоятельно выбирает стратегию поиска (`sku`, `bm25`, `dense` с отсечкой `score_threshold` или `hybrid` через RRF), а также тип товара (`product_type_hint`), подходящие разделы каталога (`category_hints` из активного списка категорий) и обязательные характеристики (`required_terms`). Живой ответ DeepSeek не перезаписывается эвристиками и регулярными выражениями; безопасный fallback на правила включается только при недоступности LLM.
+
+Затем для широкого подбора (`product_search` и `solution`) [catalog_backend.py](smart_search/catalog_backend.py) достаёт из Qdrant до **100** кандидатов, а [validation.py](smart_search/validation.py) проверяет в Python только жёсткие числовые/фактические ограничения (цена в копейках, `min_purchase`, `devices`, наличие, ОС, точная версия, SKU) и передаёт оставшихся кандидатов (`id`, название, категория и краткие характеристики/описание) в DeepSeek в качестве финального смыслового проверяющего — чтобы учитывать синонимы вроде `27 дюймов` = `27.0-inch` и `80 PLUS Platinum`, проверять соответствие `product_type_hint` (в том числе для наборов `solution`), отбрасывать аксессуары и отбирать до 12 лучших карточек (текстовые регулярки включаются только как fallback при сбое LLM). При недоборе `< 4` товаров граф один раз расширяет поиск (снимая `category_hints` / `score_threshold` и переключая `dense` в `hybrid`), сохраняя все жёсткие ограничения; если кандидаты исчерпаны, поиск не повторяется. Для запросов на аналоги, дополнения и комплекты (`alternatives`, `complements`, `solution`) запускается планирование рекомендаций и проверка доказательств.
+
+### Многопользовательская работа, Redis и контекст диалога
+
+Система рассчитана на одновременную работу нескольких пользователей без регистрации и авторизации:
+
+- **Анонимный `session_id` на 24 часа:** при первом заходе на сайт браузер генерирует `session_id` и сохраняет его в `localStorage` ([frontend/src/components/search-experience.tsx](frontend/src/components/search-experience.tsx)), поэтому история диалога не теряется при перезагрузке или закрытии вкладки.
+- **Хранение истории в Redis:** отдельный контейнер `redis` (`redis:7-alpine`) и асинхронный клиент [smart_search/session_store.py](smart_search/session_store.py) сохраняют полную историю шагов по ключу `smart_search:session:{session_id}` (до 200 последних запросов) со скользящим **TTL 24 часа** (`REDIS_SESSION_TTL_SECONDS=86400`). Если `REDIS_URL` не задан или Redis временно недоступен, поиск продолжит работу в штатном режиме без истории.
+- **Передача контекста в DeepSeek:** при каждом обращении в рамках `session_id` `POST /v1/search` подтягивает из Redis последние шаги диалога (1–2 хода, до 800 символов), а `Supervisor` передаёт список показанных пользователю карточек в `understand()`; DeepSeek сам семантически определяет, является ли реплика уточнением (фильтры, отсылка к карточке, «что к нему») или сменой темы без переноса старых ограничений. История до 200 шагов хранится в Redis 24 часа.
+- **Управление историей через API:** в [smart_search/interfaces/api.py](smart_search/interfaces/api.py) доступны `GET /v1/sessions/{session_id}` (получить полную историю за 24 часа) и `DELETE /v1/sessions/{session_id}` (очистить контекст сессии).
+- **Асинхронность и параллельная обработка (без глобальной очереди):**
+  - Эндпоинты FastAPI (`/health/ready`, `/v1/search`, `/v1/sessions/{session_id}`) реализованы как `async def` с выполнением графа поиска в пуле потоков (`run_in_threadpool`), поэтому сервер не блокируется на время запросов к DeepSeek и Qdrant.
+  - В [smart_search/catalog_backend.py](smart_search/catalog_backend.py) глобальная блокировка `_LOCK` для серверного Qdrant (`QDRANT_URL`) используется только при первом ленивом открытии индекса, а сами поисковые запросы выполняются параллельно без общей блокировки (эксклюзивная блокировка оставлена только для локального файлового Qdrant в тестах). Ленивая загрузка модели `FastEmbedEncoder` также защищена отдельной потокобезопасной блокировкой.
+
+## Структура проекта
+
+| Каталог | Содержимое |
+|---|---|
+| [smart_search](smart_search) | Модели, контракт инструментов, граф Supervisor, Redis-хранилище сессий ([session_store.py](smart_search/session_store.py)), выбор режима и аналитика. |
+| [smart_search/modes](smart_search/modes) | Демонстрационные адаптеры `test` и загрузка рабочего модуля для `prod`. |
+| [smart_search/interfaces](smart_search/interfaces) | Streamlit, HTTP API и JSON-настройки интерфейса. |
+| [frontend](frontend) | Node.js, Next.js, React и TypeScript; серверный прокси к FastAPI и поисковая страница. |
+| [smart_search/events](smart_search/events) | Выбор получателя событий и Kafka-продьюсер для аналитики. |
+| [scripts](scripts) | Команды оценки качества. |
+| [tests](tests) | Модульные проверки в `unit/`, интеграционные проверки в `integration/` и данные в `fixtures/`. |
+| [docs/contracts](docs/contracts) | [HTTP-контракт](docs/contracts/contract_request_interface.md), [контракт поискового модуля](docs/contracts/contract_tools_interface.md) и [контракт событий](docs/contracts/contract_events_interface.md). |
+
+## Запуск через Docker
+
+На Windows и macOS нужен Docker Desktop в режиме Linux-контейнеров. На Linux подойдут Docker Engine и Compose 2.24 или новее. Python на компьютере устанавливать отдельно не нужно. [Требование к версии Compose](https://docs.docker.com/reference/compose-file/services/#env_file)
+
+Compose поднимает `qdrant`, `redis`, `api` (FastAPI) и `frontend` (Next.js). Qdrant доступен внутри сети Compose по адресу `http://qdrant:6333` (и на хосте по `127.0.0.1:6333`), Redis — по `redis://redis:6379/0` (хранит полную историю анонимных пользовательских сессий по `session_id` без авторизации с TTL 24 часа и автоматическим подмешиванием контекста в DeepSeek). По умолчанию данные монтируются напрямую из локальных папок `./data/raw/qdrant-data` (`/qdrant/storage`), `./data/raw/search-data` (`/var/lib/smart-search`, где лежат `catalog/`, `models/` и `qdrant-server/index.json`) и `./data/raw/redis-data` (`/data`). Пути можно переопределить переменными `SMART_SEARCH_QDRANT_DATA_DIR`, `SMART_SEARCH_DATA_DIR` и `SMART_SEARCH_REDIS_DATA_DIR`. Открыть интерфейс можно на [127.0.0.1:3000](http://127.0.0.1:3000), API Swagger — на [127.0.0.1:8000/docs](http://127.0.0.1:8000/docs). Порты задаются через `SMART_SEARCH_FRONTEND_PORT` и `SMART_SEARCH_API_PORT`.
+
+### Вариант 1. Запуск с готовой векторизованной базой (рекомендуется для команды)
+
+1. Распакуйте переданные папки `qdrant-data` и `search-data` в `data/raw/`.
+2. Создайте `.env` из `.env.example` и укажите свой `DEEPSEEK_API_KEY`.
+3. Поднимите все сервисы одной командой:
+
+   ```powershell
+   docker compose up -d --build --wait
+   ```
+
+Перезапуск приложения (`docker compose up -d`) использует уже готовую базу и не перестраивает индекс. Для остановки используйте `docker compose down`.
+
+### Вариант 2. Сборка каталога и индекса с нуля
+
+Положите исходный XML в [`data/raw/Mindbox.yml.gz.xml`](data/raw/README.md) (или задайте путь через `SOFTLINE_FEED_PATH`) и выполните:
+
+```powershell
+docker compose stop api
+docker compose run --rm --build catalog
+if ($LASTEXITCODE -ne 0) { throw 'Не удалось собрать каталог' }
+docker compose up -d --build --wait
+```
+
+Если каталог уже подготовлен в `catalog.sqlite`, `docker compose run --rm index` переиндексирует коллекцию в серверный Qdrant с моделью из `SOFTLINE_DENSE_MODEL`. Для быстрой векторизации на локальной NVIDIA GPU доступны вспомогательные скрипты `scripts/gpu_embed.py` и `scripts/gpu_upsert.py`.
+
+Node.js-фронтенд обращается только к серверному маршруту `/api/search`. Для локального запуска задайте `SMART_SEARCH_API_URL` в `.env`; внутренняя переменная не имеет префикса `NEXT_PUBLIC_`. Compose задаёт её как `http://api:8000`. Готовность проверяется через `/api/health/ready`. Синхронный запрос к API может длиться до 120 секунд. Streamlit не удалён: его демонстрационные экраны аналитики и массовой проверки примеров запускаются отдельно и остаются вне Node UI, поскольку HTTP API для них отсутствует.
+
+Если Docker Engine запущен внутри WSL и контейнер останавливается после выхода из сеанса WSL, запускайте `docker compose up --no-build` без `-d` и оставляйте терминал открытым.
+
+### Замер BM25
+
+Для замера первого обращения после перезапуска Qdrant запускайте команды последовательно на готовом индексе, при отсутствии параллельных поисковых запросов. Скрипт измеряет первый вызов с созданием поискового клиента и последующие вызовы того же клиента. Модель, рекомендации и Kafka в измерение не входят.
+
+```powershell
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
+docker compose restart qdrant
+Get-Content -Raw -Encoding utf8 scripts/benchmark_bm25.py |
+    docker compose run --rm -T index python -X utf8 -
+```
+
+## Запуск в режиме test
+
+Python 3.12 и `uv`:
+
+```powershell
+uv sync --locked
+$env:SMART_SEARCH_MODE = "test"
+uv run --locked python -m streamlit run smart_search/interfaces/web.py
+```
+
+Откройте адрес из вывода Streamlit. Попробуйте «Сервер», «Сервер до 300 тысяч», «Аналоги AnyDesk» и «Что докупить к Astra Linux SE?». В последнем сценарии в срезе есть предложение техподдержки Astra Linux SE и отдельная серверная лицензия КриптоПро CSP. Для точного маршрута используйте «Артикул: 458218».
+
+Демонстрационные адаптеры используют небольшой срез предложений из предоставленной выгрузки Softline. Для проверки переходов в нём заданы тестовые связи и примеры оснований. Журнал демо хранится в `.local/events.sqlite3`. Можно задать другой путь через `SMART_SEARCH_EVENT_DB`.
+
+Готовые запросы, подписи рекомендаций и тексты статусов настраиваются в [ui_config.json](smart_search/interfaces/ui_config.json). Кнопка «Прогнать примеры» на вкладке «Проверка примеров» запускает весь список и выводит таблицу результатов. Для автоматических проверок используйте `uv run --locked python -m pytest -q`.
+
+## Запуск в режиме prod
+
+Укажите `SMART_SEARCH_MODE=prod` и имя модуля с поисковыми адаптерами (`smart_search.backend`). В форме Streamlit доступны произвольный текст и отправка по Enter.
+
+```powershell
+$env:SMART_SEARCH_MODE = "prod"
+$env:SMART_SEARCH_BACKEND_MODULE = "smart_search.backend"
+$env:SMART_SEARCH_KAFKA_BOOTSTRAP_SERVERS = "127.0.0.1:19092"
+uv run --locked python -m streamlit run smart_search/interfaces/web.py
+```
+
+Этот модуль экспортирует `understand`, `search`, `recommend`, `research` и `validate`. Для вызовов из Python используйте `smart_search.runtime.run_search(SearchRequest(query="Сервер"))`. Для тестов доступна функция `smart_search.supervisor.build_search` с явной подстановкой `Services`.
+
+Для программного приёма запросов запустите в том же окружении `uv run --locked python -m uvicorn smart_search.interfaces.api:app --host 127.0.0.1 --port 8000` и отправляйте JSON на `POST /v1/search`. Формат запроса, ответа и ошибок описан в [контракте интерфейса](docs/contracts/contract_request_interface.md).
+
+Граф сначала определяет маршрут. Явный SKU идёт прямо в поиск. При других запросах узел понимания извлекает ограничения или возвращает вопрос. После поиска валидатор проверяет предложения. Для дополнений и замен граф передаёт исходную позицию в рекомендации и собирает доказательства. При недоборе он один раз увеличивает лимит кандидатов, сохраняя обязательные ограничения. Для явного запроса альтернатив количество считается по проверенным заменам, для дополнений — по проверенным сопутствующим предложениям.
+
+После формирования ответа Supervisor создаёт событие результата. В `prod` он отправляет его в Kafka-совместимый топик `smart-search.search-events.v1`. Подготовьте топик на брокере и укажите адрес приложения через `SMART_SEARCH_KAFKA_BOOTSTRAP_SERVERS`. [Формат сообщения и настройка Redpanda](docs/contracts/contract_events_interface.md)
+
+## Отчёт качества
+
+```powershell
+uv run --locked python -m scripts.evaluate --output .local/demo-evaluation.json
+uv run --locked python -m scripts.evaluate --backend-module smart_search.backend --judgments path/to/judgments.json --output .local/integration-evaluation.json
+```
+
+Разметка задаёт `query` и оценки `grades` от 0 до 3 по стабильным ID товаров. Precision@4 делится на четыре, включая незаполненные позиции. NDCG@10 использует прирост `2^grade - 1`. При отсутствии релевантных позиций NDCG в отчёте равен нулю. Неуказанные в разметке ID получают оценку ноль, поэтому для справедливого сравнения заранее разметьте объединение кандидатов. Доля пустых выдач считается среди завершённых поисков `ok / partial / empty`. Ошибки зависимости и уточнения показываются отдельными статусами. p95 считается по ближайшему рангу.
+
+Набор `tests/fixtures/demo_judgments.json` предназначен для проверки контура. В этом режиме BM25, dense и hybrid используют одинаковую заглушку поиска. Метрики рабочего Qdrant и DeepSeek вычисляются при подключении реальных адаптеров.
+
+### Генерация запросов по мониторам
+
+```powershell
+$env:DEEPSEEK_API_KEY = [Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY', 'User')
+$env:DEEPSEEK_MODEL = 'deepseek-flash'
+$env:LLM_PROVIDER = 'deepseek'
+$env:LLM_TIMEOUT_SECONDS = '30'
+uv run --locked python -m scripts.generate_judgments --source data/raw/Mindbox.yml.gz.xml --count 12
+```
+
+Укажите фактический путь к XML, если файл лежит в другой папке. DeepSeek формулирует запросы по выбранным карточкам. Скрипт проверяет разрешение экрана, диагональ и бюджет у всех мониторов в выгрузке. Оценка `3` означает совпадение, `0` — нарушение хотя бы одного явного условия. Карточки с недостаточными данными остаются без оценки.
+
+`.local/monitor-judgments.json` подходит для флага `--judgments` оценщика. В `.local/monitor-judgments.audit.json` сохранены условия и число подходящих, неподходящих и неразмеченных карточек для каждого запроса. Проверьте формулировки в этом файле перед сравнением поисковых режимов.

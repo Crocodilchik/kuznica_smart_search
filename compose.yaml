@@ -1,0 +1,168 @@
+x-image: &app-image
+  image: kuznica-smart-search:local
+  build:
+    context: .
+
+x-search-storage: &search-storage
+  SOFTLINE_CATALOG_DIR: /var/lib/smart-search/catalog
+  SOFTLINE_INDEX_DIR: /var/lib/smart-search/qdrant-server
+  FASTEMBED_CACHE_PATH: /var/lib/smart-search/models
+  SOFTLINE_DENSE_MODEL: ${SOFTLINE_DENSE_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+  SMART_SEARCH_RETRIEVAL_MODE: ${SMART_SEARCH_RETRIEVAL_MODE:-hybrid}
+  HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
+  QDRANT_URL: ${SMART_SEARCH_COMPOSE_QDRANT_URL:-http://qdrant:6333}
+  QDRANT_API_KEY: ${SMART_SEARCH_COMPOSE_QDRANT_API_KEY:-}
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.20.0
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+    ports:
+      - "127.0.0.1:6333:6333"
+    volumes:
+      - ${SMART_SEARCH_QDRANT_DATA_DIR:-./data/raw/qdrant-data}:/qdrant/storage
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -ec
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/6333;
+          printf 'GET /readyz HTTP/1.0\r\n\r\n' >&3;
+          read -r status <&3;
+          [[ "$$status" == *" 200 "* ]]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - ${SMART_SEARCH_REDIS_DATA_DIR:-./data/raw/redis-data}:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    <<: *app-image
+    init: true
+    # Bypass host/WSL NAT DNS proxy (172.19.x.1) which fails when a desktop VPN is active.
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *search-storage
+      SMART_SEARCH_MODE: prod
+      SMART_SEARCH_BACKEND_MODULE: smart_search.backend
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-15}
+      REDIS_URL: ${SMART_SEARCH_REDIS_URL:-redis://redis:6379/0}
+      REDIS_SESSION_TTL_SECONDS: ${REDIS_SESSION_TTL_SECONDS:-86400}
+      SMART_SEARCH_EVENT_DB: /var/lib/smart-search/events.sqlite3
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SMART_SEARCH_API_PORT:-8000}:8000"
+    volumes:
+      - ${SMART_SEARCH_DATA_DIR:-./data/raw/search-data}:/var/lib/smart-search
+    command:
+      - python
+      - -m
+      - uvicorn
+      - smart_search.interfaces.api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health/ready', timeout=3).close()
+      interval: 20s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  frontend:
+    image: kuznica-smart-search-frontend:local
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    init: true
+    environment:
+      NODE_ENV: production
+      SMART_SEARCH_API_URL: http://api:8000
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${SMART_SEARCH_FRONTEND_PORT:-3000}:3000"
+
+  catalog:
+    <<: *app-image
+    profiles: [setup]
+    working_dir: /var/lib/smart-search
+    environment:
+      <<: *search-storage
+      PYTHONPATH: /app
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    volumes:
+      - ${SMART_SEARCH_DATA_DIR:-./data/raw/search-data}:/var/lib/smart-search
+      - type: bind
+        source: ${SOFTLINE_FEED_PATH:-./data/raw/Mindbox.yml.gz.xml}
+        target: /input/Mindbox.yml.gz.xml
+        read_only: true
+        bind:
+          create_host_path: false
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        python -X utf8 -m softline_search prepare /input/Mindbox.yml.gz.xml --output "$$SOFTLINE_CATALOG_DIR" --reports /var/lib/smart-search/catalog-reports
+        if [ -n "$$SOFTLINE_DENSE_MODEL" ]; then
+          python -X utf8 -m softline_search index --catalog "$$SOFTLINE_CATALOG_DIR" --output "$$SOFTLINE_INDEX_DIR" --dense-model "$$SOFTLINE_DENSE_MODEL"
+        else
+          python -X utf8 -m softline_search index --catalog "$$SOFTLINE_CATALOG_DIR" --output "$$SOFTLINE_INDEX_DIR"
+        fi
+
+  index:
+    <<: *app-image
+    profiles: [setup]
+    working_dir: /var/lib/smart-search
+    environment:
+      <<: *search-storage
+      PYTHONPATH: /app
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    volumes:
+      - ${SMART_SEARCH_DATA_DIR:-./data/raw/search-data}:/var/lib/smart-search
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        if [ -n "$$SOFTLINE_DENSE_MODEL" ]; then
+          exec python -X utf8 -m softline_search index --catalog "$$SOFTLINE_CATALOG_DIR" --output "$$SOFTLINE_INDEX_DIR" --dense-model "$$SOFTLINE_DENSE_MODEL"
+        else
+          exec python -X utf8 -m softline_search index --catalog "$$SOFTLINE_CATALOG_DIR" --output "$$SOFTLINE_INDEX_DIR"
+        fi
