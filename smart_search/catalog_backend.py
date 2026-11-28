@@ -144,6 +144,7 @@ def _access():
 def close() -> None:
     """Release local Qdrant and reload environment settings on the next request."""
     with _LOCK:
+        active_category_names.cache_clear()
         if _engine.cache_info().currsize:
             _engine().close()
         _engine.cache_clear()
@@ -231,6 +232,16 @@ def category_names() -> dict[str, str]:
         }
 
 
+@cache
+def active_category_names() -> dict[str, str]:
+    """Cached sorted map of active catalog categories; returns {} if catalog is unavailable."""
+    try:
+        items = category_names().items()
+    except (ConnectionError, OSError, sqlite3.Error, ValueError, RuntimeError):
+        return {}
+    return dict(sorted(items, key=lambda pair: (int(pair[0]) if pair[0].isdigit() else 0, pair[0])))
+
+
 _TYPE_CATEGORY_EXACT_NAMES: dict[str, set[str]] = {
     "монитор": {"мониторы"},
     "ноутбук": {"ноутбуки"},
@@ -239,6 +250,7 @@ _TYPE_CATEGORY_EXACT_NAMES: dict[str, set[str]] = {
     "мышь": {"клавиатуры, мыши, комплекты"},
     "клавиатура": {"клавиатуры, мыши, комплекты"},
     "принтер": {"принтеры и мфу", "принтеры"},
+    "сканер": {"сканеры", "сканеры штрихкодов"},
     "коммутатор": {"коммутаторы"},
     "роутер": {"wi-fi роутеры", "проводные роутеры", "3g/lte-роутеры"},
     "веб-камера": {"вебкамеры", "веб-камеры"},

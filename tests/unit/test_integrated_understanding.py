@@ -198,3 +198,64 @@ def test_non_monetary_units_are_never_parsed_as_price_and_type_hints_populate(mo
     mon_spec = understand(SearchRequest(query="монитор от 27 дюймов до 45 тыс"))
     assert mon_spec.hard_filters.min_total_price_kopecks is None
     assert mon_spec.hard_filters.max_total_price_kopecks == 4_500_000
+
+
+def test_previous_context_budget_does_not_bleed_into_llm_result(monkeypatch):
+    seen_prompts = []
+
+    def complete(system_prompt, user_prompt, schema):
+        seen_prompts.append(system_prompt)
+        return schema.model_validate(
+            {
+                "raw_query": "что к нему докупить?",
+                "normalized_query": "ИБП APC Easy UPS 800VA",
+                "intent": "complements",
+                "search_mode": "bm25",
+                "hard_filters": {},
+            }
+        )
+
+    monkeypatch.setattr("smart_search.understanding.complete_json", complete)
+    monkeypatch.setattr(
+        "smart_search.understanding.active_category_names",
+        lambda: {"94641": "Сканеры", "83844": "Сумки и чехлы для ноутбуков"},
+    )
+    spec = understand(
+        SearchRequest(
+            query="что к нему докупить?",
+            previous_context="Предыдущий запрос: ок, тогда подбери ИБП APC до 25 тысяч",
+        )
+    )
+    assert spec.intent == "complements"
+    assert spec.hard_filters.max_total_price_kopecks is None
+    assert '"94641":"Сканеры"' in seen_prompts[0]
+
+
+def test_correction_negation_ignores_stale_budget_and_resolves_llm_category_hints(monkeypatch):
+    def complete(system_prompt, user_prompt, schema):
+        return schema.model_validate(
+            {
+                "raw_query": "а нужен вообще не принтер, а сканер до 30 тысяч",
+                "normalized_query": "сканер",
+                "intent": "product_search",
+                "search_mode": "hybrid",
+                "product_type_hint": "сканер",
+                "category_hints": ["94641"],
+                "hard_filters": {"max_total_price_kopecks": 3_000_000, "budget_scope": "primary"},
+            }
+        )
+
+    monkeypatch.setattr("smart_search.understanding.complete_json", complete)
+    monkeypatch.setattr(
+        "smart_search.understanding.resolve_category", lambda c: [c] if c == "94641" else []
+    )
+    spec = understand(
+        SearchRequest(
+            query="а нужен вообще не принтер, а сканер до 30 тысяч",
+            previous_context="Предыдущий запрос: принтер лазерный цветной до 500 рублей",
+        )
+    )
+    assert spec.normalized_query == "сканер"
+    assert spec.category is None
+    assert spec.category_hints == ["94641"]
+    assert spec.hard_filters.max_total_price_kopecks == 3_000_000

@@ -6,7 +6,11 @@ from decimal import Decimal
 
 from pydantic import ValidationError
 
-from smart_search.catalog_backend import resolve_category, resolve_type_category_hints
+from smart_search.catalog_backend import (
+    active_category_names,
+    resolve_category,
+    resolve_type_category_hints,
+)
 from smart_search.contracts import HardFilters, Preferences, QuerySpec, SearchRequest
 from smart_search.llm.exceptions import LLMError
 from smart_search.model_client import complete_json
@@ -84,6 +88,8 @@ PROMPT = """Ты — главный ИИ-маршрутизатор и инте�
 3. Сформировать чистый, грамотный `normalized_query` для поиска:
    - исправь опечатки, транслит и сленг («хачу мышку да 10 тыщ рублей» -> «компьютерная мышь», «моник» -> «монитор», «антивирь под винду» -> «антивирус Windows», «noutbuk dlya raboty do 80k» -> «ноутбук для работы»);
    - убери слова вроде «хочу», «купить», «подскажите», повторы и фразы о цене/бюджете;
+   - при исправлении/отрицании вида «не X, а Y» или «вместо X нужен Y» полностью отбрось отменённый товар `X` и формируй `normalized_query`, `product_type_hint` и `category_hints` строго по нужному `Y`;
+   - для `intent: "solution"` (составной комплект вида «X, Y и Z» с общим бюджетом) указывай в `normalized_query` и `product_type_hint` основное базовое устройство (`X`), к которому нужно подобрать дополнения (`budget_scope: "bundle"`), чтобы поиск не скатился в аксессуары;
    - обязательно сохраняй точные названия моделей, бренды, версии с точками (5.0, 1.8, 2024) и важные характеристики (27 дюймов, 1920×1080, RGB, 750W).
 4. Самостоятельно выбери поисковый инструмент в `search_mode`:
    - "sku" — только если пользователь указал конкретный артикул (тогда скопируй его в `sku` дословно из текста).
@@ -97,9 +103,10 @@ PROMPT = """Ты — главный ИИ-маршрутизатор и инте�
    - "solution" — запрос комплекта или комплексного ИТ-решения («комплект для офиса», «чем защитить сеть предприятия»);
    - "exact_product" — поиск конкретного артикула (`sku`).
    Для "alternatives" и "complements" в `normalized_query` укажи исходный товар, относительно которого ищутся аналоги/дополнения.
-6. Не угадывай названия разделов каталога: оставляй `category: null` и `category_hints: []`, чтобы не отрезать подходящие товары при несовпадении названия папки магазина.
-   Вместо угадывания категории используй:
-   - `product_type_hint`: канонический тип товара («мышь», «клавиатура», «монитор», «сервер», «ноутбук», «ИБП», «антивирус», «операционная система»), если пользователь явно просит конкретный вид товара (иначе `null`);
+6. Для выбора категорий опирайся ТОЛЬКО на список активных категорий каталога в конце инструкции (если он передан):
+   - оставляй `category: null`, чтобы не отрезать смежные разделы жёстким фильтром;
+   - в `category_hints` выбери от 1 до 4 подходящих `category_id` из списка для конкретного типа товара (или `[]`, если подходящих нет или запрос слишком общий);
+   - в `product_type_hint` укажи канонический тип товара («мышь», «клавиатура», «монитор», «сервер», «ноутбук», «ИБП», «сканер», «принтер», «антивирус», «операционная система» и т.п.), иначе `null`;
    - `required_terms`: список обязательных характеристик, которые должны быть подтверждены в карточке (например `["RGB"]` при запросе «с ргб»).
 7. Извлеки ограничения в `hard_filters` (все денежные суммы ЦЕЛЫМИ ЧИСЛАМИ В КОПЕЙКАХ, т.е. рубли * 100):
    - `min_total_price_kopecks`: минимальная цена («от 10 тыс» -> 1000000);
@@ -114,6 +121,8 @@ PROMPT = """Ты — главный ИИ-маршрутизатор и инте�
 9. Как использовать `previous_context`:
    - Опирайся на `previous_context` ТОЛЬКО если текущий `request` является прямым продолжением или уточнением предыдущего запроса (например: «подешевле», «до 5 тысяч», «беспроводную», «под Linux», «что к нему докупить?», ответ на `clarifying_question`).
    - Если `request` называет НОВЫЙ самостоятельный товар или категорию (например, после «антивирус под Windows на 50 компов» пользователь ввёл «мышь», «красная клавиатура» или «сервер»), полностью ИГНОРИРУЙ старые `hard_filters` (`os`, `devices`, `country`, бюджет) и старый товар из `previous_context`.
+   - При `intent: "complements"` НЕ переноси бюджет (`max_total_price_kopecks`, `min_total_price_kopecks`) и `budget_scope: "bundle"` с предыдущего поиска основного товара — задавай бюджет, только если он явно указан для дополнений/комплекта в текущем `request`.
+   - Если `request` — приветствие, прощание, нетоварный вопрос (погода, еда, код, фильмы, возврат/статус заказа) или бессмысленный набор символов, НЕ запускай поиск по каталогу: верни вежливый `clarifying_question` и оставь `hard_filters` пустым.
 
 Примеры:
 Запрос: «хачу мышку да 10 тыщ рублей»
@@ -338,11 +347,19 @@ def _rules(request: SearchRequest) -> QuerySpec:
     )
 
 
+def _system_prompt() -> str:
+    categories = active_category_names()
+    if not categories:
+        return PROMPT
+    serialized = json.dumps(categories, ensure_ascii=False, separators=(",", ":"))
+    return f"{PROMPT}\nАктивные категории каталога (id: название): {serialized}"
+
+
 def understand(request: SearchRequest) -> QuerySpec:
-    fallback = _rules(request)
+    query_rules = _rules(SearchRequest(query=request.query))
     # Fast-path explicit SKU (direct lookup, replacement, or complement) without burning an LLM call.
-    if fallback.sku:
-        return fallback
+    if query_rules.sku:
+        return query_rules
 
     prompt = json.dumps(
         {
@@ -352,15 +369,17 @@ def understand(request: SearchRequest) -> QuerySpec:
         ensure_ascii=False,
     )
     try:
-        suggestion = complete_json(PROMPT, prompt, QuerySpec)
+        suggestion = complete_json(_system_prompt(), prompt, QuerySpec)
     except (LLMError, ValidationError, TimeoutError, ConnectionError):
+        fallback = _rules(request)
         if fallback.intent == "product_search" and not fallback.sku and not fallback.category_hints:
             hints = resolve_type_category_hints(fallback.product_type_hint)
             if hints:
                 fallback = fallback.model_copy(update={"category_hints": hints[:4]})
         return fallback.model_copy(update={"warnings": ["understanding_llm_fallback"]})
 
-    # DeepSeek is in charge: only backfill None fields from fallback rules and guard against hallucinated SKUs.
+    # DeepSeek is in charge: only backfill missing fields from the current query itself
+    # (never bleed stale previous_context constraints back in via regex) and guard against fake SKUs.
     source_text = " ".join(filter(None, [request.previous_context, request.query])).casefold()
     sku = suggestion.sku if suggestion.sku and suggestion.sku.casefold() in source_text else None
     intent = suggestion.intent
@@ -382,22 +401,26 @@ def understand(request: SearchRequest) -> QuerySpec:
                 resolved = ids[0] if len(ids) == 1 else hint
                 if resolved not in hints:
                     hints.append(resolved)
-        if not hints and intent == "product_search":
+        if not hints and intent == "product_search" and not suggestion.clarifying_question:
             hints = resolve_type_category_hints(
-                suggestion.product_type_hint or fallback.product_type_hint
+                suggestion.product_type_hint or query_rules.product_type_hint
             )
 
-    hard = fallback.hard_filters.model_dump(exclude_none=True) | suggestion.hard_filters.model_dump(
-        exclude_none=True
-    )
-    preferences = fallback.preferences.model_dump(
-        exclude_none=True
-    ) | suggestion.preferences.model_dump(exclude_none=True)
+    if suggestion.clarifying_question:
+        hard = suggestion.hard_filters.model_dump(exclude_none=True)
+        preferences = suggestion.preferences.model_dump(exclude_none=True)
+    else:
+        hard = query_rules.hard_filters.model_dump(
+            exclude_none=True
+        ) | suggestion.hard_filters.model_dump(exclude_none=True)
+        preferences = query_rules.preferences.model_dump(
+            exclude_none=True
+        ) | suggestion.preferences.model_dump(exclude_none=True)
 
     entity = suggestion.normalized_query
     versions = re.findall(r"(?<![\w.,])\d+(?:\.\d+)+(?![\w.,])", request.query)
     if any(version not in entity for version in versions):
-        entity = fallback.normalized_query
+        entity = query_rules.normalized_query or suggestion.normalized_query
 
     search_mode = "sku" if sku else (suggestion.search_mode or "hybrid")
     score_threshold = suggestion.score_threshold if search_mode in {"dense", "hybrid"} else None
