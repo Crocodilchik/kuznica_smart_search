@@ -1,4 +1,4 @@
-"""Search-side contract matching project-agent-roles.md; monetary amounts are kopecks."""
+"""Search-side contract; monetary amounts are kopecks."""
 
 from __future__ import annotations
 
