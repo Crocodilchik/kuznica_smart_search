@@ -5,6 +5,7 @@
 .ruff_cache/
 __pycache__/
 *.py[cod]
+.vscode/
 
 # Local environment and credentials
 .env
