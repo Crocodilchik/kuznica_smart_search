@@ -2,7 +2,7 @@
 
 from src.contracts import Product, RecommendationDraft
 from src.recommendation import Plan
-from src.research import Batch, Check, Quote, research_batch
+from src.research import Batch, Check, Quote, research, research_batch
 
 
 def test_plan_allows_up_to_four_directions():
@@ -80,3 +80,37 @@ def test_research_batch_confirms_matching_standard_interfaces():
         "mon-1.attributes.Интерфейсы",
         "cab-1.title",
     ]
+
+
+def test_research_matches_compatible_model_token_inside_vendor_sku():
+    ups = Product(
+        product_id="ups-1",
+        title="ИБП APC Smart-UPS 2200VA",
+        category="ИБП",
+        url="https://store.example/ups-1",
+        attributes={"Совместимая батарея": ["RBC141"]},
+    )
+    battery = Product(
+        product_id="bat-1",
+        sku="APCRBC141",
+        title="Сменная батарея APC APCRBC141",
+        category="Батареи",
+        url="https://store.example/bat-1",
+    )
+    unrelated = Product(
+        product_id="bat-2",
+        sku="APCRBC14",
+        title="Сменная батарея APC APCRBC14",
+        category="Батареи",
+        url="https://store.example/bat-2",
+    )
+    ok_res = research(
+        RecommendationDraft(anchor_id="ups-1", product=battery, type="cross_sell", claim="ok"),
+        anchor=ups,
+    )
+    assert ok_res.status == "confirmed"
+    bad_res = research(
+        RecommendationDraft(anchor_id="ups-1", product=unrelated, type="cross_sell", claim="bad"),
+        anchor=ups,
+    )
+    assert bad_res.status == "unknown"
